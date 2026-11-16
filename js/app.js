@@ -720,7 +720,7 @@ async function boot() {
   } else {
     try { navigator.storage?.persisted?.().then((p) => { if (!p) return navigator.storage.persist?.(); }).catch(() => {}); } catch (e) {}
     // Service worker only for the browser/PWA build; never inside the Capacitor native shell.
-    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.Capacitor?.isNativePlatform?.()) navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('SW registration failed', e));
+    if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol) && !window.LB_NO_SW && !window.Capacitor?.isNativePlatform?.()) navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('SW registration failed', e));
   }
 }
 boot();

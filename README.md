@@ -4,6 +4,8 @@ Offline differential-leveling field book for phones. HTML/CSS/vanilla JS, no bui
 
 **Live app:** https://ddlawler-theonly.github.io/level-book/
 
+**Single-file version:** https://ddlawler-theonly.github.io/level-book/LevelBook.html (everything inlined in one HTML file; no service worker).
+
 ## Install on iPhone
 
 1. Open the live app link in **Safari** (not Chrome or another browser).
