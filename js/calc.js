@@ -53,6 +53,52 @@ export function threeWire({ t, m, b }, K = 100, tol = 0.003) {
 export const valueOf = (r, s) => (r.wires ? threeWire(r.wires, s.stadiaK, s.spreadTol).mean : r.value);
 export const distOf = (r, s) => (r.wires ? threeWire(r.wires, s.stadiaK, s.spreadTol).dist : (r.dist ?? null));
 
+// ---------- Two-peg (collimation) test ----------
+// Sign convention: C > 0 means the line of sight is inclined UP, so every reading is too HIGH by C × sight distance.
+//   observed = true + C·d   →   corrected reading = reading − C × d
+// Setup 1 (midway, equal sights) gives the true difference; setup 2 (near peg A) gives an apparent one:
+//   a1 − b1 = Δ + C(dA1 − dB1)          a2 − b2 = Δ + C(dA2 − dB2)
+//   C = [(a2 − b2) − (a1 − b1)] / [(dA2 − dB2) − (dA1 − dB1)]   (midway: dA1 = dB1, so the 2nd term drops out)
+// Curvature & refraction are neglected (0.0206·(d/1000 ft)² ≈ 0.0009 ft at 210 ft and nearly cancels in setup 1).
+export const PEG_TOL_DEFAULT = 0.005; // ft per 100 ft of sight (≈ 10″ of arc)
+export const ARCSEC_PER_RAD = 206264.806;
+export function pegTest(t, tol = PEG_TOL_DEFAULT) {
+  const D = Number(t.spacing);
+  const dA1 = t.dA1 != null ? Number(t.dA1) : D / 2, dB1 = t.dB1 != null ? Number(t.dB1) : D / 2;
+  const dA2 = Number(t.dA2), dB2 = Number(t.dB2);
+  const { a1, b1, a2, b2 } = t;
+  const have = [a1, b1, a2, b2, dA1, dB1, dA2, dB2].every((x) => x != null && isFinite(x));
+  const diff1 = have ? round(a1 - b1, 3) : null, diff2 = have ? round(a2 - b2, 3) : null;
+  const den = (dA2 - dB2) - (dA1 - dB1);
+  const ok = have && Math.abs(den) >= 20;
+  const per100 = ok ? round(((diff2 - diff1) / den) * 100, 4) : null; // ft per 100 ft (stored precision)
+  const C = per100 == null ? null : per100 / 100;                   // ft per ft
+  const trueDiff = ok ? round(diff1 - C * (dA1 - dB1), 3) : null;
+  return {
+    ok, dA1, dB1, dA2, dB2, diff1, diff2, trueDiff, C, per100,
+    arcsec: C == null ? null : round(Math.atan(C) * ARCSEC_PER_RAD, 1),
+    err100: per100, err300: C == null ? null : round(C * 300, 3),
+    bShould: ok ? round(b2 - C * dB2, 3) : null, aShould: ok ? round(a2 - C * dA2, 3) : null,
+    tol, pass: ok && Math.abs(per100) <= tol + 1e-9,
+    error: !have ? 'incomplete' : !ok ? 'Setup 2 sights must differ by at least 20 ft' : null,
+  };
+}
+export const pegLabel = (per100) => (per100 == null ? '—' : (per100 > 0 ? '+' : per100 < 0 ? '−' : '±') + Math.abs(per100).toFixed(4));
+export const latestPeg = (tests) => [...(tests || [])].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || 0) - (a.created || 0))[0] || null;
+// Peg correction in force for a survey (snapshot stored on the survey), or null.
+export function pegFor(s) {
+  if (!s.peg || !s.peg.on || !s.peg.test) return null;
+  const p = pegTest(s.peg.test);
+  return p.ok ? { C: p.C, per100: p.per100, test: s.peg.test } : null;
+}
+// Apply the peg correction to one reading. Returns the value used in the reduction.
+export function corrected(raw, d, peg) {
+  if (!peg || raw == null || !isFinite(raw)) return { v: raw, corr: null, noDist: false };
+  if (d == null || !isFinite(d) || d <= 0) return { v: raw, corr: null, noDist: true };
+  const v = round(raw - peg.C * d, 3);
+  return { v, corr: round(v - raw, 3), noDist: false };
+}
+
 export const isBMName = (name, s) => {
   if (!name) return false;
   const n = name.trim().toUpperCase();
@@ -75,10 +121,15 @@ export function computeSurvey(s) {
   const pointElev = [{ point, elev, cumDist: 0, setup: 0, readingIdx: -1, kind: 'BM' }];
   let cumDist = 0;
   const readings = s.readings || [];
+  const peg = pegFor(s); const info = []; let pegApplied = 0, pegSkipped = 0;
   rows.push(curRow = { sta: point, kind: 'BM', bs: null, hi: null, fs: null, elev, setup: 1, bsIdx: null, fsIdx: null, start: true });
   readings.forEach((r, i) => {
-    const v = valueOf(r, s);
+    const raw = valueOf(r, s);
     const d = distOf(r, s);
+    const pc = corrected(raw, d, peg); const v = pc.v;
+    if (peg) { if (pc.noDist) pegSkipped++; else pegApplied++; }
+    const rawText = r.wires ? null : r.text; const text = pc.corr != null ? null : rawText;
+    const pg = (p) => ({ [p + 'Raw']: raw, [p + 'RawText']: rawText, [p + 'Corr']: pc.corr, [p + 'NoPeg']: pc.noDist });
     if (r.wires) {
       const tw = threeWire(r.wires, s.stadiaK, s.spreadTol);
       if (!tw.orderOk || !tw.spreadOk) { failed++; addW(i, !tw.orderOk ? 'Wire order' : `Spread Δ ${tw.spreadDiff.toFixed(3)}`); }
@@ -88,21 +139,23 @@ export function computeSurvey(s) {
     if (r.note) addW(i, r.note);
     if (r.type === 'BS') {
       hi = round(elev + v, 3);
+      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, hi, elev: null, setup: setups.length + 1 };
       sumBS += v; if (d) { totBSd += d; cumDist += d; }
       setups.push({ n: setups.length + 1, bsIdx: i, fsIdx: null, bsDist: d, fsDist: null, hi, ifs: [], from: point, to: null });
       if (curRow && curRow.sta === point && curRow.bs == null && !curRow.ifs) {
-        Object.assign(curRow, { bs: v, hi, bsIdx: i, bsText: r.text, bsWires: r.wires || null, bsDist: d, setup: setups.length });
+        Object.assign(curRow, { bs: v, hi, bsIdx: i, bsText: text, bsWires: r.wires || null, bsDist: d, setup: setups.length, ...pg('bs') });
       } else {
-        rows.push(curRow = { sta: point, kind: isBMName(point, s) ? 'BM' : 'TP', bs: v, hi, fs: null, elev, setup: setups.length, bsIdx: i, bsText: r.text, bsWires: r.wires || null, bsDist: d });
+        rows.push(curRow = { sta: point, kind: isBMName(point, s) ? 'BM' : 'TP', bs: v, hi, fs: null, elev, setup: setups.length, bsIdx: i, bsText: text, bsWires: r.wires || null, bsDist: d, ...pg('bs') });
       }
       expect = 'FS';
     } else if (r.type === 'FS') {
       const su = setups[setups.length - 1];
       const e = round(hi - v, 3);
+      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, hi: null, elev: e, setup: setups.length };
       sumFS += v; if (d) { totFSd += d; cumDist += d; }
       if (su) { su.fsIdx = i; su.fsDist = d; su.to = r.point; }
       elev = e; point = r.point;
-      rows.push(curRow = { sta: r.point, kind: isBMName(r.point, s) ? 'BM' : 'TP', bs: null, hi: null, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: r.text, fsWires: r.wires || null, fsDist: d });
+      rows.push(curRow = { sta: r.point, kind: isBMName(r.point, s) ? 'BM' : 'TP', bs: null, hi: null, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: text, fsWires: r.wires || null, fsDist: d, ...pg('fs') });
       pointElev.push({ point: r.point, elev: e, cumDist, setup: setups.length, readingIdx: i, kind: curRow.kind });
       if (su && su.bsDist != null && su.fsDist != null && s.imbalanceLimit && Math.abs(su.bsDist - su.fsDist) > s.imbalanceLimit)
         addW(i, `Setup ${su.n} imbalance ${round(Math.abs(su.bsDist - su.fsDist), 1)} ft`);
@@ -110,8 +163,9 @@ export function computeSurvey(s) {
     } else if (r.type === 'IFS') {
       const su = setups[setups.length - 1];
       const e = round(hi - v, 3);
+      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, hi: null, elev: e, setup: setups.length };
       if (su) su.ifs.push(i);
-      rows.push({ sta: r.point, kind: 'IFS', ifs: true, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: r.text, fsWires: r.wires || null, fsDist: d, cumDist: cumDist - (setups.length ? 0 : 0) });
+      rows.push({ sta: r.point, kind: 'IFS', ifs: true, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: text, fsWires: r.wires || null, fsDist: d, cumDist, ...pg('fs') });
       pointElev.push({ point: r.point, elev: e, cumDist: cumDist + 0, setup: setups.length, readingIdx: i, kind: 'IFS', side: true });
     }
   });
@@ -124,7 +178,8 @@ export function computeSurvey(s) {
   // Running BS/FS balance over completed setups (both sights measured).
   const imbalance = round(setups.filter((su) => su.bsDist != null && su.fsDist != null).reduce((a, su) => a + su.bsDist - su.fsDist, 0), 1);
   return {
-    rows, setups, warnings, pointElev,
+    rows, setups, warnings, pointElev, info,
+    peg: peg ? { ...peg, applied: pegApplied, skipped: pegSkipped } : null,
     sumBS: round(sumBS, 3), sumFS: round(sumFS, 3),
     arith: { diff, delta, ok: delta != null && Math.abs(diff - delta) < 0.0005, against: expect === 'FS' ? 'HI' : 'elev' },
     firstElev, lastElev: elev, currentPoint: point, hi, expect,

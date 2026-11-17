@@ -6,7 +6,7 @@ export function surveyDefaults(type = 'loop') {
     id: uid(), name: '', type, method: 'single', observer: '', rodPerson: '', instrument: '',
     stadiaK: 100, spreadTol: 0.003, startBM: { name: 'BM-1', elev: null }, closeBM: { name: '', elev: null },
     standard: '3rd', customK: 0.05, rodLength: 16, imbalanceLimit: 10, maxSight: 300,
-    readings: [], closed: false, adjustMethod: 'setups', created: Date.now(), updated: Date.now(),
+    readings: [], closed: false, adjustMethod: 'setups', peg: null, created: Date.now(), updated: Date.now(),
   };
 }
 
@@ -35,4 +35,11 @@ export function seedJobs() {
   return [
     { id: uid(), name: 'Pearland Tellepson', date: '2026-11-16', description: 'Pad grades, north lot BMs', client: 'SAMPLE DATA', archived: false, created: now, updated: now, surveys: [loop, run] },
   ];
+}
+
+// Sample two-peg test: pegs 200 ft apart; setup 1 midway (100/100); setup 2 10 ft behind peg A (10/210).
+// a1 − b1 = 0.372 (true), a2 − b2 = 0.368 (apparent) → C = (0.368 − 0.372)/(10 − 210) = +0.00002 ft/ft = +0.0020 ft/100 ft.
+export function seedPegTests() {
+  return [{ id: uid(), date: '2026-11-12', instrument: 'Auto level AT-B4', observer: 'D. Lawler', note: 'SAMPLE – shoot your own before relying on it',
+    spacing: 200, dA2: 10, dB2: 210, a1: 5.284, b1: 4.912, a2: 4.618, b2: 4.250, rodLength: 16, sample: true, created: Date.parse('2026-11-12T08:00:00-06:00') }];
 }
