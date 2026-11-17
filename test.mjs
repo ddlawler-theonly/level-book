@@ -153,3 +153,48 @@ test('seed loop with peg ON: corrected HI/elev, arith check holds, OFF restores 
   const r3 = C.computeSurvey({ ...run, peg: { on: true, test: peg } });
   near(r3.info[0].corr, -0.002); near(r3.rows[0].hi, 102.45 + 4.718);
 });
+
+// ---------- Use distance switch ----------
+test('useDist OFF: same raw elevations, no peg correction, no distance checks, closure by setups, no allowable', () => {
+  const off = { ...loop, useDist: false, peg: { on: true, test: peg } };
+  const c = C.computeSurvey(off);
+  assert.equal(c.distUsed, false);
+  near(c.rows[0].hi, 107.760); near(c.rows.find(r => r.ifs).elev, 104.990);      // readings used as read
+  assert.equal(c.peg.applied, 0); assert.equal(c.peg.skipped, 9);                // peg ON but nothing corrected
+  assert.equal(c.totalDist, 0); assert.equal(c.imbalance, 0);
+  assert.equal(c.rows[0].bsDist, 150, 'recorded distance still shown');
+  const cl = C.closure(off, c);
+  assert.ok(cl.closedOn && cl.distOff && cl.allowable == null && !cl.pass); near(cl.misclosure, 0.010);
+  const adj = C.adjust(off, 'distance');                                          // forced to setups
+  near(adj.find(p => p.point === 'TP1').correction, -0.003);
+  // warnings suppressed
+  const w = C.computeSurvey({ ...surveyDefaults('loop'), useDist: false, startBM: { name: 'BM-1', elev: 100 }, readings: [
+    { type: 'BS', point: 'BM-1', value: 5, dist: 100 }, { type: 'FS', point: 'TP1', value: 4, dist: 350 }] });
+  assert.equal((w.warnings[1] || []).length, 0);
+  // three-wire: stadia recorded, not used
+  const r3 = C.computeSurvey({ ...run, useDist: false, peg: { on: true, test: peg } });
+  near(r3.rows[0].bsDist, 98.8, 0.05); near(r3.rows[0].hi, 107.170); assert.equal(r3.totalBSdist, 0);
+  // default (undefined) = ON
+  assert.equal(C.usesDist(loop), true); assert.equal(C.computeSurvey(loop).totalDist, 1165);
+});
+
+// ---------- Stake out ----------
+import { seedStake } from './js/seed.js';
+test('stake out: target = HI − design, cut/fill = ground − design, off-rod flags', () => {
+  const a = C.stakeCalc(107.76, 103.25, 4.72, 16);
+  near(a.target, 4.51); near(a.ground, 103.04); near(a.cf, -0.21); assert.equal(a.kind, 'FILL'); assert.equal(C.cfShort(a), 'F 0.21');
+  const b = C.stakeCalc(107.76, 103.0, 4.10, 16); assert.equal(b.kind, 'CUT'); near(b.cf, 0.66); assert.equal(C.cfShort(b), 'C 0.66');
+  assert.equal(C.stakeCalc(107.76, 102.9, 4.86).kind, 'ON GRADE');
+  assert.equal(C.stakeCalc(107.76, 90.5, null, 16).out, 'below'); assert.equal(C.stakeCalc(107.76, 108.2, null, 16).out, 'above');
+  assert.equal(C.stakeCalc(107.76, 103.25, null).kind, null);
+});
+test('stake survey: seed sample, peg + distance switch', () => {
+  const s = seedStake(); const st = C.stakeSurvey(s);
+  near(st.setups[0].hi, 107.76); assert.deepEqual(st.rows.map(C.cfShort), ['F 0.21', 'C 0.66', 'ON GR']);
+  assert.equal(st.cuts, 1); assert.equal(st.fills, 1); assert.equal(st.onGrade, 1);
+  const pg = C.stakeSurvey({ ...s, peg: { on: true, test: peg } });              // C = +0.00002: BS 5.31−0.003 → HI 107.757
+  near(pg.setups[0].hi, 107.757); near(pg.rows[0].corr, -0.002);                  // 4.72 − 0.0017 → 4.718
+  const off = C.stakeSurvey({ ...s, useDist: false, peg: { on: true, test: peg } });
+  near(off.setups[0].hi, 107.76); assert.equal(off.rows[0].corr, null); assert.equal(off.distUsed, false);
+  assert.equal(C.surveyStatus(s), 'closed');
+});

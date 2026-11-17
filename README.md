@@ -23,6 +23,29 @@ Android: open the link in Chrome → menu → **Install app** / Add to Home scre
 - Rod graphic, HI/elevation calculations, stadia distance, wire-spread checks
 - Level book table, closure and adjustments, share as PDF / text / CSV
 - **Peg Test (v1.1.0):** two-peg collimation check from the main menu; each loop/run can apply the latest peg test (Peg correction switch, can be turned off)
+- **Stake Out (v1.2.0):** backsight a benchmark for HI, type a design elevation, read the target rod, then shoot the actual rod for CUT / FILL to 0.01 ft
+- **Use distance switch (v1.2.0):** every screen that asks for a sight distance has a switch to use or ignore distances
+- **Field trial (v1.2.0):** TRIAL badge, one-time welcome card, and **Send feedback** (header button or Settings)
+
+## Stake Out
+
+1. Main menu → **Stake Out** (just above Peg Test). Enter the start benchmark and its elevation.
+2. Backsight the BM: **HI = BM elevation + BS**.
+3. For each stake type the **design elevation**: **target rod = HI − design** (blue dashed marker on the rod).
+4. Shoot the rod at the stake: **ground = HI − rod**, **cut/fill = ground − design**. Positive = **CUT** (red), negative = **FILL** (blue), under 0.005 ft = **ON GRADE**.
+5. If the target is above the line of sight or past the rod length you get a warning; you can still save.
+6. **Next stake**, **New setup (BS)** after moving the level, then **Finish** to share the stake sheet (PDF / text / CSV).
+
+## Use distance switch
+
+- On the survey setup screen, the entry screens (loop/run/site/stake), the closure screen, and as a default in Settings.
+- **ON:** distances feed peg correction, sight-balance and max-sight warnings, total distance and distance-based allowable closure / adjustment.
+- **OFF:** readings are used as read; no peg correction, no balance warnings, allowable closure shows n/a and adjustment is per setup. Distances you typed are kept and come back if you turn it on again.
+- Peg Test always uses distances (switch locked on). Reports show "Distances: used / not used".
+
+## Field trial feedback
+
+Tap the speech-bubble button at the top of the Jobs or main-menu screen (or Settings → Send feedback). Pick a 1–5 rating and a category (bug / idea / looks / math), add notes, and optionally attach the current survey report as a PDF. It opens your phone's share sheet; if sharing is not available it opens an email to ddlawler@hotmail.com with subject "Level Book feedback v1.2.0". App version, device, screen size, theme and the current screen are added automatically. Nothing is sent without you tapping Send in your mail or messaging app.
 
 ## Peg test & peg correction
 
@@ -35,8 +58,8 @@ Android: open the link in Chrome → menu → **Install app** / Add to Home scre
 
 ## Data
 
-Stored in `localStorage` (key `levelbook.v1`) on the device only. Settings → Export backup (JSON) / Import backup. Peg tests are included in backups.
+Stored in `localStorage` (key `levelbook.v1`) on the device only. Settings → Export backup (JSON) / Import backup. Peg tests are included in backups. A sample job (Pearland) includes a loop, a run and a stake-out survey.
 
 Unit tests: `node --test test.mjs`.
 
-Service worker cache name is `levelbook-v1.1.0` (bump it when assets change).
+Service worker cache name is `levelbook-v1.2.0` (bump it when assets change).
