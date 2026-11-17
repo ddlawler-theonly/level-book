@@ -1,6 +1,6 @@
 // Report builders: model -> plain text, CSV, PDF (jsPDF, vendored), HTML preview pages.
 import * as C from './calc.js';
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.2.1';
 
 const TYPE = { loop: 'Level Loop', run: 'Level Run', site: 'Site Levels', stake: 'Stake Out' };
 export const usDate = (iso) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${m}/${d}/${y}`; };
@@ -53,8 +53,8 @@ export function pegLines(t, p = C.pegTest(t)) {
   ];
 }
 
-export const reportTitle = (job, s) => `Level Book – ${job.name}${s ? ' – ' + s.name : ''} – ${usDate(job.date)}`;
-export const fileBase = (job, s) => ['LevelBook', job.name, s ? s.name : 'Job', (job.date || '').replace(/-/g, '')].join('_').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-');
+export const reportTitle = (job, s) => `BlueWorks Level Book – ${job.name}${s ? ' – ' + s.name : ''} – ${usDate(job.date)}`;
+export const fileBase = (job, s) => ['BlueWorks-LevelBook', job.name, s ? s.name : 'Job', (job.date || '').replace(/-/g, '')].join('_').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-');
 
 function tableRows(m, inc) {
   const { comp, s, three } = m; const out = [];
@@ -117,7 +117,7 @@ export function textReport(job, surveys) {
   surveys.forEach((s, i) => {
     const m = surveyModel(job, s);
     if (i) out.push('');
-    out.push(`LEVEL BOOK – ${job.name}`);
+    out.push(`BLUEWORKS LEVEL BOOK – ${job.name}`);
     out.push(`${usDate(job.date)} · ${job.description || ''}`.trim());
     out.push(`${s.name} · ${TYPE[s.type]} · ${m.three ? '3-wire' : 'single wire'}`);
     if (!m.closed) out.push('*** IN PROGRESS – NOT CLOSED ***');
@@ -145,14 +145,14 @@ export function textReport(job, surveys) {
       m.comp.pointElev.slice(1).forEach((p) => out.push(`${pad(p.point + (p.side ? '*' : ''), 10)}${pad(p.elev.toFixed(3), 9, true)}`));
     }
   });
-  out.push(`Generated ${stamp()} · Level Book v${APP_VERSION}`);
+  out.push(`Generated ${stamp()} · BlueWorks Level Book v${APP_VERSION}`);
   return out.join('\n');
 }
 
 const csvCell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 export function csvReport(job, surveys) {
   const distLines = surveys.map((s) => [`Distances – ${s.name}`, s.useDist === false ? 'not used' : 'used']);
-  const lines = [['Job', job.name], ['Project date', usDate(job.date)], ['Description', job.description || ''], ['Client/job #', job.client || ''], ['Units', 'US survey decimal ft'], ['Generated', stamp()], ...distLines, []];
+  const lines = [['Report', `BlueWorks Level Book v${APP_VERSION}`], ['Job', job.name], ['Project date', usDate(job.date)], ['Description', job.description || ''], ['Client/job #', job.client || ''], ['Units', 'US survey decimal ft'], ['Generated', stamp()], ...distLines, []];
   lines.push(['Survey', 'Type', 'Method', 'Seq', 'Setup', 'Reading', 'Point', 'Value', 'Top', 'Mid', 'Bot', 'Dist ft', 'Peg corr', 'Corrected', 'HI', 'Elev', 'Adj Elev', 'Check', 'Notes', 'Status']);
   const pegRows = [];
   const stakeOut = [];
@@ -183,7 +183,7 @@ export function pdfReport(job, surveys, inc) {
     if (si) doc.addPage();
     const m = surveyModel(job, s);
     let y = M;
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.text(winAnsi(`LEVEL BOOK – ${job.name}`), M, y); y += 8;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.text(winAnsi(`BLUEWORKS LEVEL BOOK – ${job.name}`), M, y); y += 8;
     doc.setDrawColor(255, 196, 0); doc.setLineWidth(3); doc.line(M, y, W - M, y); y += 14;
     if (!m.closed) { doc.setTextColor(197, 34, 31); doc.setFontSize(11); doc.text('IN PROGRESS – NOT CLOSED', M, y); doc.setTextColor(0); y += 14; }
     doc.setFontSize(9);
@@ -235,7 +235,7 @@ export function pdfReport(job, surveys, inc) {
   const n = doc.getNumberOfPages(); const H = doc.internal.pageSize.getHeight(); const st = winAnsi(stamp());
   for (let i = 1; i <= n; i++) {
     doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(90);
-    doc.text(winAnsi(`Generated ${st} - Level Book v${APP_VERSION} - US survey feet`), M, H - 24);
+    doc.text(winAnsi(`Generated ${st} - BlueWorks Level Book v${APP_VERSION} - US survey feet`), M, H - 24);
     doc.text(`Page ${i} of ${n}`, W - M, H - 24, { align: 'right' }); doc.setTextColor(0);
   }
   return doc;
@@ -249,7 +249,7 @@ export function previewPages(job, surveys, inc) {
   surveys.forEach((s, si) => {
     if (si && cur.length) { pages.push(cur.join('')); cur = []; lines = 0; }
     const m = surveyModel(job, s);
-    push(`<h3>LEVEL BOOK – ${e(job.name)}</h3><div style="height:2px;background:#FFC400;margin:2px 0 4px"></div>${m.closed ? '' : '<div class="inprog">IN PROGRESS – NOT CLOSED</div>'}`, 3);
+    push(`<h3>BLUEWORKS LEVEL BOOK – ${e(job.name)}</h3><div style="height:2px;background:#FFC400;margin:2px 0 4px"></div>${m.closed ? '' : '<div class="inprog">IN PROGRESS – NOT CLOSED</div>'}`, 3);
     push(`<table class="kvt">${headerLines(m).map(([k, v]) => `<tr><td style="text-align:left;font-family:Helvetica;font-weight:700;width:28%;background:none">${e(k)}</td><td style="text-align:left;background:none">${e(v)}</td></tr>`).join('')}</table>`, 11);
     if (m.stake) {
       const col = (t) => (t.startsWith('C') ? '#C5221F' : t.startsWith('F') ? '#0B5FA5' : '#1E8E3E');
@@ -279,5 +279,5 @@ export function previewPages(job, surveys, inc) {
   });
   if (cur.length) pages.push(cur.join(''));
   const st = stamp();
-  return pages.map((p, i) => `${p}<div style="margin-top:8px;color:#666;font-size:7.5px;display:flex;justify-content:space-between"><span>Generated ${e(st)} · Level Book v${APP_VERSION}</span><span>Page ${i + 1} of ${pages.length}</span></div>`);
+  return pages.map((p, i) => `${p}<div style="margin-top:8px;color:#666;font-size:7.5px;display:flex;justify-content:space-between"><span>Generated ${e(st)} · BlueWorks Level Book v${APP_VERSION}</span><span>Page ${i + 1} of ${pages.length}</span></div>`);
 }

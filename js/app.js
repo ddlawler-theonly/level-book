@@ -52,7 +52,7 @@ const I = {
   peg: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 34h34"/><path d="M8 34V14M32 34V10"/><path d="M6 14h4M6 19h4M6 24h4M30 10h4M30 15h4M30 20h4"/><path d="M14 22l4-6 4 6M18 16v-3"/><path d="M13 13h21" stroke-dasharray="2 3"/></svg>',
   level: '<svg viewBox="0 0 96 96" width="96" height="96" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><rect x="62" y="10" width="14" height="76" rx="2"/><path d="M62 22h7M62 34h7M62 46h7M62 58h7M62 70h7"/><path d="M16 40h30l-4 10H20z"/><path d="M31 50v12M22 86l9-24 9 24"/><path d="M46 44h12" stroke-dasharray="3 4"/></svg>',
 };
-const topbar = ({ back, title, right = '', wordmark }) => `<header class="topbar">${back ? `<button class="back" data-back="${esc(back.href)}">‹ ${esc(back.label)}</button>` : ''}${wordmark ? `<span class="wordmark">LEVEL BOOK</span><span class="trialtag" title="Field trial build">TRIAL</span><span class="vertag">v${R.APP_VERSION}</span><span class="spacer"></span>` : `<span class="title">${esc(title || '')}</span>`}${right}</header>`;
+const topbar = ({ back, title, right = '', wordmark }) => `<header class="topbar">${back ? `<button class="back" data-back="${esc(back.href)}">‹ ${esc(back.label)}</button>` : ''}${wordmark ? `<span class="wordmark" aria-label="BlueWorks Level Book"><small>BLUEWORKS</small>LEVEL BOOK</span><span class="trialtag" title="Field trial build">TRIAL</span><span class="vertag">v${R.APP_VERSION}</span><span class="spacer"></span>` : `<span class="title">${esc(title || '')}</span>`}${right}</header>`;
 const sysIcons = () => `<button class="iconbtn" data-act="feedback" aria-label="Send feedback">${I.chat}</button><button class="iconbtn" data-act="theme" aria-label="Toggle Sunlight/Dusk theme">${I.theme}</button><button class="iconbtn" data-act="settings" aria-label="Settings">${I.gear}</button>`;
 function bindCommon(root) {
   $$('[data-back]', root).forEach((b) => (b.onclick = () => go(b.dataset.back)));
@@ -64,9 +64,9 @@ function bindCommon(root) {
 // ---------- field trial: welcome + feedback ----------
 const FEEDBACK_TO = 'ddlawler@hotmail.com';
 function welcomeCard() {
-  const o = overlay(`<div class="dialog welcome" role="dialog" aria-label="Welcome to the Level Book field trial">
-    <div class="wl-h"><span class="trialtag">TRIAL</span><h2>Welcome to Level Book</h2></div>
-    <p>Thanks for field-testing <b>Level Book v${R.APP_VERSION}</b> – a digital level book for loops, runs, site levels, stake out and peg tests.</p>
+  const o = overlay(`<div class="dialog welcome" role="dialog" aria-label="Welcome to the BlueWorks Level Book field trial">
+    <div class="wl-h"><span class="trialtag">TRIAL</span><h2>Welcome to BlueWorks Level Book</h2></div>
+    <p>Thanks for field-testing <b>BlueWorks Level Book v${R.APP_VERSION}</b> – a digital level book for loops, runs, site levels, stake out and peg tests.</p>
     <ul class="wl">
       <li><b>Your data stays on your phone.</b> Nothing is uploaded; there is no account.</li>
       <li><b>Send feedback</b> any time with the ${I.chat.replace('<svg', '<svg width="18" height="18" style="vertical-align:-4px"')} button at the top, or in Settings.</li>
@@ -95,7 +95,7 @@ function feedbackContext() {
 }
 function feedbackText(f, ctx) {
   const lines = [
-    `Level Book feedback v${R.APP_VERSION}`, `To: ${FEEDBACK_TO}`, '',
+    `BlueWorks Level Book feedback v${R.APP_VERSION}`, `To: ${FEEDBACK_TO}`, '',
     `Rating: ${f.rating ? '★'.repeat(f.rating) + '☆'.repeat(5 - f.rating) + ` (${f.rating}/5)` : 'not given'}`,
     `Category: ${f.cat}`, '', 'Notes:', f.notes.trim() || '(none)', '',
     '— device info —',
@@ -110,7 +110,7 @@ function feedbackText(f, ctx) {
 }
 function feedbackMailto(f, ctx, note) {
   const body = feedbackText(f, ctx).split('\n').filter((l) => !l.startsWith('To: ')).join('\n') + (note ? '\n\n' + note : '');
-  return `mailto:${FEEDBACK_TO}?subject=${encodeURIComponent('Level Book feedback v' + R.APP_VERSION)}&body=${encodeURIComponent(body)}`;
+  return `mailto:${FEEDBACK_TO}?subject=${encodeURIComponent('BlueWorks Level Book feedback v' + R.APP_VERSION)}&body=${encodeURIComponent(body)}`;
 }
 function openFeedback() {
   const ctx = feedbackContext(); const f = { rating: 0, cat: 'bug', notes: '', attach: false };
@@ -131,7 +131,7 @@ function openFeedback() {
   if ($('#fbAttach', s.el)) $('#fbAttach', s.el).onchange = (e) => (f.attach = e.target.checked);
   // Build everything synchronously inside the tap so iOS keeps the user gesture for navigator.share.
   $('#fbSend', s.el).onclick = () => {
-    const title = 'Level Book feedback v' + R.APP_VERSION; const text = feedbackText(f, ctx);
+    const title = 'BlueWorks Level Book feedback v' + R.APP_VERSION; const text = feedbackText(f, ctx);
     let file = null;
     if (f.attach && ctx.s) { try { file = new File([R.pdfReport(ctx.job, [ctx.s], includesFor(ctx.job)).output('blob')], R.fileBase(ctx.job, ctx.s) + '.pdf', { type: 'application/pdf' }); } catch (e) { console.warn(e); } }
     const mail = (note) => { const url = feedbackMailto(f, ctx, note); if (window.__lbMailHook) return window.__lbMailHook(url); location.href = url; };
@@ -1191,7 +1191,7 @@ async function openSettings() {
     <button class="listbtn" id="fbOpen">${I.chat.replace('<svg', '<svg width="22" height="22"')} Send feedback</button>
     <button class="listbtn" id="wlOpen">ⓘ Show welcome card</button>
     <div class="section-label">About</div>
-    <div class="msg" style="font-weight:400;color:var(--muted);line-height:1.5">Level Book v${R.APP_VERSION} (field trial) · US survey decimal feet · works offline.<br>${isIOS && !isStandalone() ? 'Install: Safari → Share → Add to Home Screen.<br>' : ''}Data is stored only on this device. Safari can clear data for sites not added to the Home Screen after ~7 days unused – export backups regularly.<br>Storage: ${persisted ? 'persistent' : 'best-effort'} · ${isStandalone() ? 'installed app' : 'browser tab'}</div>`);
+    <div class="msg" style="font-weight:400;color:var(--muted);line-height:1.5">BlueWorks Level Book v${R.APP_VERSION} (field trial) · US survey decimal feet · works offline.<br>${isIOS && !isStandalone() ? 'Install: Safari → Share → Add to Home Screen.<br>' : ''}Data is stored only on this device. Safari can clear data for sites not added to the Home Screen after ~7 days unused – export backups regularly.<br>Storage: ${persisted ? 'persistent' : 'best-effort'} · ${isStandalone() ? 'installed app' : 'browser tab'}</div>`);
   $('#fbOpen', s.el).onclick = () => { s.close(); openFeedback(); };
   $('#wlOpen', s.el).onclick = () => { s.close(); welcomeCard(); };
   $('#prefDist', s.el).onclick = () => { db.prefs.useDist = !db.prefs.useDist; save(); setSwitch($('#prefDist', s.el), db.prefs.useDist); toast(`New surveys: distances ${db.prefs.useDist ? 'ON' : 'OFF'}`); };
@@ -1199,7 +1199,7 @@ async function openSettings() {
   $$('#thm button', s.el).forEach((b) => (b.onclick = () => { db.prefs.theme = b.dataset.v; save(); applyTheme(); $$('#thm button', s.el).forEach((x) => x.setAttribute('aria-pressed', x === b)); }));
   $('#exp', s.el).onclick = () => {
     const blob = new Blob([JSON.stringify({ app: 'levelbook', version: R.APP_VERSION, exported: new Date().toISOString(), data: db }, null, 1)], { type: 'application/json' });
-    const name = `LevelBook-backup-${todayISO()}.json`; const file = new File([blob], name, { type: 'application/json' });
+    const name = `BlueWorks-LevelBook-backup-${todayISO()}.json`; const file = new File([blob], name, { type: 'application/json' });
     if (!N() && isIOS && navigator.canShare && navigator.canShare({ files: [file] })) navigator.share({ files: [file], title: name }).catch((e) => { if (e.name !== 'AbortError') downloadBlob(blob, name); });
     else downloadBlob(blob, name);
   };

@@ -1,4 +1,4 @@
-// Level Book — pure calculation module (no DOM). US survey decimal feet only.
+// BlueWorks Level Book — pure calculation module (no DOM). US survey decimal feet only.
 export const FT_PER_MILE = 5280;
 
 // Closure standards. FGCS vertical-control standards are written as k·√K (mm, K in km).
