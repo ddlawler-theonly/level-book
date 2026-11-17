@@ -241,6 +241,25 @@ table.adj th:first-child,table.adj td:first-child{text-align:left;font-family:va
 .check:first-child{border-top:0}
 .check input{width:24px;height:24px;accent-color:var(--blue)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+/* Peg correction */
+.switchrow{display:flex;align-items:center;gap:12px;min-height:56px;padding:6px 0}
+.switchrow .sw-l{flex:1;min-width:0}
+.sw-t{font-size:17px;font-weight:700}
+.sw-d{font-size:14px;color:var(--muted);margin-top:2px;line-height:1.35}
+.switch{flex:none;position:relative;width:64px;height:40px;border-radius:999px;border:2px solid var(--line);background:var(--alt);cursor:pointer;padding:0;transition:background .15s}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:30px;height:30px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .15s}
+.switch[aria-checked="true"]{background:var(--blue);border-color:var(--blue)}
+.switch[aria-checked="true"]::after{transform:translateX(24px)}
+.switch:disabled{opacity:.45;cursor:not-allowed}
+.switch::before{content:"";position:absolute;inset:-10px}
+.linkbtn{border:0;background:none;color:var(--blue);font-weight:700;font-size:15px;min-height:44px;padding:0;cursor:pointer}
+.pegbtn.on{border-color:var(--blue);color:var(--blue);font-family:var(--mono)}
+table.book .pc{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15}
+table.book .pc small{font-size:12px;color:var(--muted);font-weight:400}
+table.book .pc small.nd{color:var(--warn);font-family:var(--sans);font-weight:700;font-size:11px;letter-spacing:.02em}
+.msg.pegmsg{font-family:var(--mono);color:var(--blue)}
+.msg.pegmsg.nd{font-family:var(--sans);color:var(--muted);font-weight:400}
+[hidden]{display:none!important}
 
 </style>
 </head>
@@ -717,6 +736,52 @@ function threeWire({ t, m, b }, K = 100, tol = 0.003) {
 const valueOf = (r, s) => (r.wires ? threeWire(r.wires, s.stadiaK, s.spreadTol).mean : r.value);
 const distOf = (r, s) => (r.wires ? threeWire(r.wires, s.stadiaK, s.spreadTol).dist : (r.dist ?? null));
 
+// ---------- Two-peg (collimation) test ----------
+// Sign convention: C > 0 means the line of sight is inclined UP, so every reading is too HIGH by C × sight distance.
+//   observed = true + C·d   →   corrected reading = reading − C × d
+// Setup 1 (midway, equal sights) gives the true difference; setup 2 (near peg A) gives an apparent one:
+//   a1 − b1 = Δ + C(dA1 − dB1)          a2 − b2 = Δ + C(dA2 − dB2)
+//   C = [(a2 − b2) − (a1 − b1)] / [(dA2 − dB2) − (dA1 − dB1)]   (midway: dA1 = dB1, so the 2nd term drops out)
+// Curvature & refraction are neglected (0.0206·(d/1000 ft)² ≈ 0.0009 ft at 210 ft and nearly cancels in setup 1).
+const PEG_TOL_DEFAULT = 0.005; // ft per 100 ft of sight (≈ 10″ of arc)
+const ARCSEC_PER_RAD = 206264.806;
+function pegTest(t, tol = PEG_TOL_DEFAULT) {
+  const D = Number(t.spacing);
+  const dA1 = t.dA1 != null ? Number(t.dA1) : D / 2, dB1 = t.dB1 != null ? Number(t.dB1) : D / 2;
+  const dA2 = Number(t.dA2), dB2 = Number(t.dB2);
+  const { a1, b1, a2, b2 } = t;
+  const have = [a1, b1, a2, b2, dA1, dB1, dA2, dB2].every((x) => x != null && isFinite(x));
+  const diff1 = have ? round(a1 - b1, 3) : null, diff2 = have ? round(a2 - b2, 3) : null;
+  const den = (dA2 - dB2) - (dA1 - dB1);
+  const ok = have && Math.abs(den) >= 20;
+  const per100 = ok ? round(((diff2 - diff1) / den) * 100, 4) : null; // ft per 100 ft (stored precision)
+  const C = per100 == null ? null : per100 / 100;                   // ft per ft
+  const trueDiff = ok ? round(diff1 - C * (dA1 - dB1), 3) : null;
+  return {
+    ok, dA1, dB1, dA2, dB2, diff1, diff2, trueDiff, C, per100,
+    arcsec: C == null ? null : round(Math.atan(C) * ARCSEC_PER_RAD, 1),
+    err100: per100, err300: C == null ? null : round(C * 300, 3),
+    bShould: ok ? round(b2 - C * dB2, 3) : null, aShould: ok ? round(a2 - C * dA2, 3) : null,
+    tol, pass: ok && Math.abs(per100) <= tol + 1e-9,
+    error: !have ? 'incomplete' : !ok ? 'Setup 2 sights must differ by at least 20 ft' : null,
+  };
+}
+const pegLabel = (per100) => (per100 == null ? '—' : (per100 > 0 ? '+' : per100 < 0 ? '−' : '±') + Math.abs(per100).toFixed(4));
+const latestPeg = (tests) => [...(tests || [])].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || 0) - (a.created || 0))[0] || null;
+// Peg correction in force for a survey (snapshot stored on the survey), or null.
+function pegFor(s) {
+  if (!s.peg || !s.peg.on || !s.peg.test) return null;
+  const p = pegTest(s.peg.test);
+  return p.ok ? { C: p.C, per100: p.per100, test: s.peg.test } : null;
+}
+// Apply the peg correction to one reading. Returns the value used in the reduction.
+function corrected(raw, d, peg) {
+  if (!peg || raw == null || !isFinite(raw)) return { v: raw, corr: null, noDist: false };
+  if (d == null || !isFinite(d) || d <= 0) return { v: raw, corr: null, noDist: true };
+  const v = round(raw - peg.C * d, 3);
+  return { v, corr: round(v - raw, 3), noDist: false };
+}
+
 const isBMName = (name, s) => {
   if (!name) return false;
   const n = name.trim().toUpperCase();
@@ -739,10 +804,15 @@ function computeSurvey(s) {
   const pointElev = [{ point, elev, cumDist: 0, setup: 0, readingIdx: -1, kind: 'BM' }];
   let cumDist = 0;
   const readings = s.readings || [];
+  const peg = pegFor(s); const info = []; let pegApplied = 0, pegSkipped = 0;
   rows.push(curRow = { sta: point, kind: 'BM', bs: null, hi: null, fs: null, elev, setup: 1, bsIdx: null, fsIdx: null, start: true });
   readings.forEach((r, i) => {
-    const v = valueOf(r, s);
+    const raw = valueOf(r, s);
     const d = distOf(r, s);
+    const pc = corrected(raw, d, peg); const v = pc.v;
+    if (peg) { if (pc.noDist) pegSkipped++; else pegApplied++; }
+    const rawText = r.wires ? null : r.text; const text = pc.corr != null ? null : rawText;
+    const pg = (p) => ({ [p + 'Raw']: raw, [p + 'RawText']: rawText, [p + 'Corr']: pc.corr, [p + 'NoPeg']: pc.noDist });
     if (r.wires) {
       const tw = threeWire(r.wires, s.stadiaK, s.spreadTol);
       if (!tw.orderOk || !tw.spreadOk) { failed++; addW(i, !tw.orderOk ? 'Wire order' : `Spread Δ ${tw.spreadDiff.toFixed(3)}`); }
@@ -752,21 +822,23 @@ function computeSurvey(s) {
     if (r.note) addW(i, r.note);
     if (r.type === 'BS') {
       hi = round(elev + v, 3);
+      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, hi, elev: null, setup: setups.length + 1 };
       sumBS += v; if (d) { totBSd += d; cumDist += d; }
       setups.push({ n: setups.length + 1, bsIdx: i, fsIdx: null, bsDist: d, fsDist: null, hi, ifs: [], from: point, to: null });
       if (curRow && curRow.sta === point && curRow.bs == null && !curRow.ifs) {
-        Object.assign(curRow, { bs: v, hi, bsIdx: i, bsText: r.text, bsWires: r.wires || null, bsDist: d, setup: setups.length });
+        Object.assign(curRow, { bs: v, hi, bsIdx: i, bsText: text, bsWires: r.wires || null, bsDist: d, setup: setups.length, ...pg('bs') });
       } else {
-        rows.push(curRow = { sta: point, kind: isBMName(point, s) ? 'BM' : 'TP', bs: v, hi, fs: null, elev, setup: setups.length, bsIdx: i, bsText: r.text, bsWires: r.wires || null, bsDist: d });
+        rows.push(curRow = { sta: point, kind: isBMName(point, s) ? 'BM' : 'TP', bs: v, hi, fs: null, elev, setup: setups.length, bsIdx: i, bsText: text, bsWires: r.wires || null, bsDist: d, ...pg('bs') });
       }
       expect = 'FS';
     } else if (r.type === 'FS') {
       const su = setups[setups.length - 1];
       const e = round(hi - v, 3);
+      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, hi: null, elev: e, setup: setups.length };
       sumFS += v; if (d) { totFSd += d; cumDist += d; }
       if (su) { su.fsIdx = i; su.fsDist = d; su.to = r.point; }
       elev = e; point = r.point;
-      rows.push(curRow = { sta: r.point, kind: isBMName(r.point, s) ? 'BM' : 'TP', bs: null, hi: null, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: r.text, fsWires: r.wires || null, fsDist: d });
+      rows.push(curRow = { sta: r.point, kind: isBMName(r.point, s) ? 'BM' : 'TP', bs: null, hi: null, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: text, fsWires: r.wires || null, fsDist: d, ...pg('fs') });
       pointElev.push({ point: r.point, elev: e, cumDist, setup: setups.length, readingIdx: i, kind: curRow.kind });
       if (su && su.bsDist != null && su.fsDist != null && s.imbalanceLimit && Math.abs(su.bsDist - su.fsDist) > s.imbalanceLimit)
         addW(i, `Setup ${su.n} imbalance ${round(Math.abs(su.bsDist - su.fsDist), 1)} ft`);
@@ -774,8 +846,9 @@ function computeSurvey(s) {
     } else if (r.type === 'IFS') {
       const su = setups[setups.length - 1];
       const e = round(hi - v, 3);
+      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, hi: null, elev: e, setup: setups.length };
       if (su) su.ifs.push(i);
-      rows.push({ sta: r.point, kind: 'IFS', ifs: true, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: r.text, fsWires: r.wires || null, fsDist: d, cumDist: cumDist - (setups.length ? 0 : 0) });
+      rows.push({ sta: r.point, kind: 'IFS', ifs: true, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: text, fsWires: r.wires || null, fsDist: d, cumDist, ...pg('fs') });
       pointElev.push({ point: r.point, elev: e, cumDist: cumDist + 0, setup: setups.length, readingIdx: i, kind: 'IFS', side: true });
     }
   });
@@ -788,7 +861,8 @@ function computeSurvey(s) {
   // Running BS/FS balance over completed setups (both sights measured).
   const imbalance = round(setups.filter((su) => su.bsDist != null && su.fsDist != null).reduce((a, su) => a + su.bsDist - su.fsDist, 0), 1);
   return {
-    rows, setups, warnings, pointElev,
+    rows, setups, warnings, pointElev, info,
+    peg: peg ? { ...peg, applied: pegApplied, skipped: pegSkipped } : null,
     sumBS: round(sumBS, 3), sumFS: round(sumFS, 3),
     arith: { diff, delta, ok: delta != null && Math.abs(diff - delta) < 0.0005, against: expect === 'FS' ? 'HI' : 'elev' },
     firstElev, lastElev: elev, currentPoint: point, hi, expect,
@@ -844,7 +918,7 @@ function surveyStatus(s) {
   return cl.pass ? 'closed' : 'check';
 }
 
-return { FT_PER_MILE, STANDARDS, mmPerSqrtKmToFtPerSqrtMi, round, f3, fmtReading, readingError, threeWire, valueOf, distOf, isBMName, computeSurvey, closingBM, standardK, allowable, closure, adjust, surveyStatus };
+return { FT_PER_MILE, STANDARDS, mmPerSqrtKmToFtPerSqrtMi, round, f3, fmtReading, readingError, threeWire, valueOf, distOf, PEG_TOL_DEFAULT, ARCSEC_PER_RAD, pegTest, pegLabel, latestPeg, pegFor, corrected, isBMName, computeSurvey, closingBM, standardK, allowable, closure, adjust, surveyStatus };
 })();
 const __m_seed = (() => { 'use strict';
 // Sample data seeded on first run. Clearly labeled SAMPLE.
@@ -855,7 +929,7 @@ function surveyDefaults(type = 'loop') {
     id: uid(), name: '', type, method: 'single', observer: '', rodPerson: '', instrument: '',
     stadiaK: 100, spreadTol: 0.003, startBM: { name: 'BM-1', elev: null }, closeBM: { name: '', elev: null },
     standard: '3rd', customK: 0.05, rodLength: 16, imbalanceLimit: 10, maxSight: 300,
-    readings: [], closed: false, adjustMethod: 'setups', created: Date.now(), updated: Date.now(),
+    readings: [], closed: false, adjustMethod: 'setups', peg: null, created: Date.now(), updated: Date.now(),
   };
 }
 
@@ -886,7 +960,14 @@ function seedJobs() {
   ];
 }
 
-return { uid, surveyDefaults, seedJobs };
+// Sample two-peg test: pegs 200 ft apart; setup 1 midway (100/100); setup 2 10 ft behind peg A (10/210).
+// a1 − b1 = 0.372 (true), a2 − b2 = 0.368 (apparent) → C = (0.368 − 0.372)/(10 − 210) = +0.00002 ft/ft = +0.0020 ft/100 ft.
+function seedPegTests() {
+  return [{ id: uid(), date: '2026-11-12', instrument: 'Auto level AT-B4', observer: 'D. Lawler', note: 'SAMPLE – shoot your own before relying on it',
+    spacing: 200, dA2: 10, dB2: 210, a1: 5.284, b1: 4.912, a2: 4.618, b2: 4.250, rodLength: 16, sample: true, created: Date.parse('2026-11-12T08:00:00-06:00') }];
+}
+
+return { uid, surveyDefaults, seedJobs, seedPegTests };
 })();
 const __m_rod = (() => { 'use strict';
 // SVG Philadelphia-style rod. Values in US decimal feet; rod reading increases upward.
@@ -1010,7 +1091,7 @@ return { RodView };
 const __m_report = (() => { 'use strict';
 // Report builders: model -> plain text, CSV, PDF (jsPDF, vendored), HTML preview pages.
 const C = __m_calc;
-const APP_VERSION = '1.0.3';
+const APP_VERSION = '1.1.0';
 
 const TYPE = { loop: 'Level Loop', run: 'Level Run', site: 'Site Levels' };
 const usDate = (iso) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${m}/${d}/${y}`; };
@@ -1029,7 +1110,26 @@ function surveyModel(job, s) {
   const closed = !!s.closed && (isSite || cl.closedOn);
   const adj = !isSite && closed && cl.closedOn ? C.adjust(s, s.adjustMethod || 'setups', comp, cl) : null;
   const std = C.STANDARDS.find((x) => x.id === s.standard) || C.STANDARDS[0];
-  return { job, s, comp, cl, closed, adj, std, isSite, three: s.method === 'three' && !isSite };
+  const pegT = s.peg?.test || null; const peg = pegT ? C.pegTest(pegT, pegT.tol || C.PEG_TOL_DEFAULT) : null;
+  return { job, s, comp, cl, closed, adj, std, isSite, three: s.method === 'three' && !isSite, pegOn: !!comp.peg, pegT, peg };
+}
+
+// Peg-correction status line and the peg test record (for every report format).
+function pegStatus(m) {
+  if (m.isSite) return null;
+  if (m.pegOn) return `ON – C ${C.pegLabel(m.comp.peg.per100)} ft/100 ft (test ${usDate(m.pegT.date)}, ${m.pegT.instrument || '—'}); ${m.comp.peg.applied} readings corrected, ${m.comp.peg.skipped} without distance left as read`;
+  return m.pegT ? `OFF – raw readings (test ${usDate(m.pegT.date)} on file, C ${C.pegLabel(m.peg.per100)} ft/100 ft)` : 'OFF – no peg test';
+}
+function pegLines(t, p = C.pegTest(t)) {
+  return [
+    ['Peg test date', `${usDate(t.date)}${t.sample ? ' (SAMPLE)' : ''}`], ['Instrument / observer', `${t.instrument || '—'} / ${t.observer || '—'}`],
+    ['Peg spacing', `${C.round(t.spacing, 1)} ft`],
+    ['Setup 1 (midway)', `a1 ${C.f3(t.a1)}  b1 ${C.f3(t.b1)}  sights ${p.dA1.toFixed(1)}/${p.dB1.toFixed(1)} ft  a1-b1 ${sgn(p.diff1)}`],
+    ['Setup 2 (near A)', `a2 ${C.f3(t.a2)}  b2 ${C.f3(t.b2)}  sights ${C.round(p.dA2, 1)}/${C.round(p.dB2, 1)} ft  a2-b2 ${sgn(p.diff2)}`],
+    ['Collimation C', `${C.pegLabel(p.per100)} ft/100 ft (${p.arcsec == null ? '—' : (p.arcsec >= 0 ? '+' : '-') + Math.abs(p.arcsec).toFixed(1) + '"'}); 300 ft sight ${sgn(p.err300)} ft`],
+    ['Peg test result', `${p.pass ? 'PASS' : 'FAIL'} (tolerance ${p.tol} ft/100 ft)`],
+    ['Formula', 'C = [(a2-b2)-(a1-b1)] / (dA-dB); corrected = reading - C x dist'],
+  ];
 }
 
 const reportTitle = (job, s) => `Level Book – ${job.name}${s ? ' – ' + s.name : ''} – ${usDate(job.date)}`;
@@ -1040,8 +1140,9 @@ function tableRows(m, inc) {
   comp.rows.forEach((r) => {
     const wires = (w) => (w ? [w.t.toFixed(3), w.m.toFixed(3), w.b.toFixed(3)] : ['', '', '']);
     const row = {
-      sta: (r.ifs ? '  ' : '') + r.sta + (r.ifs ? ' (IFS)' : ''), bs: r.bs != null ? C.fmtReading(r.bs, r.bsText) : '', hi: r.hi != null ? C.f3(r.hi) : '',
-      fs: r.fs != null ? C.fmtReading(r.fs, r.fsText) : '', elev: C.f3(r.elev), dist: [r.bsDist, r.fsDist].filter((x) => x != null).join('/'),
+      sta: (r.ifs ? '  ' : '') + r.sta + (r.ifs ? ' (IFS)' : ''), bs: r.bs != null ? C.fmtReading(r.bsRaw ?? r.bs, r.bsRaw != null ? r.bsRawText : r.bsText) : '', hi: r.hi != null ? C.f3(r.hi) : '',
+      fs: r.fs != null ? C.fmtReading(r.fsRaw ?? r.fs, r.fsRaw != null ? r.fsRawText : r.fsText) : '', elev: C.f3(r.elev),
+      peg: [['bs', 'BS'], ['fs', r.ifs ? 'IFS' : 'FS']].map(([p]) => (r[p] == null ? null : r[p + 'Corr'] != null ? sgn(r[p + 'Corr']) : r[p + 'NoPeg'] ? 'n/d' : null)).filter(Boolean).join('/'), dist: [r.bsDist, r.fsDist].filter((x) => x != null).join('/'),
       note: (r.warn || []).join('; '), bm: r.kind === 'BM', ifs: !!r.ifs, warn: (r.warn || []).length > 0,
     };
     if (three && inc.threewire) {
@@ -1061,6 +1162,7 @@ function checksLines(m) {
   L.push(['Arithmetic check', `${sgn(comp.arith.diff)} vs ${sgn(comp.arith.delta)} ${comp.arith.ok ? 'PASS' : 'FAIL'}`]);
   L.push(['BS / FS distance', `${comp.totalBSdist} / ${comp.totalFSdist} ft (imbalance ${comp.imbalance} ft)`]);
   if (three) L.push(['Three-wire checks failed', String(comp.failedChecks)]);
+  if (!isSite) L.push(['Peg correction', pegStatus(m)]);
   if (!isSite) {
     L.push(['Closed on', cl.closedOn ? `${cl.bm.name}` : 'NOT CLOSED']);
     if (cl.closedOn) {
@@ -1081,6 +1183,7 @@ function headerLines(m) {
     ['Job', job.name], ['Project date', usDate(job.date)], ['Description', job.description || ''], ['Client / job #', job.client || ''],
     ['Survey', `${s.name} (${TYPE[s.type]})`], ['Reading method', s.type === 'site' ? 'Single wire' : s.method === 'three' ? `Three-wire (K=${s.stadiaK}, tol ${s.spreadTol} ft)` : 'Single wire'],
     ['Observer / rod', `${s.observer || '—'} / ${s.rodPerson || '—'}`], ['Instrument', s.instrument || '—'], ['Units', 'US survey decimal feet'],
+    ...(s.type === 'site' ? [] : [['Peg correction', pegStatus(m)]]),
     ['Benchmarks', `Start ${s.startBM.name} ${C.f3(Number(s.startBM.elev))}` + (s.type === 'run' ? `; close ${s.closeBM.name} ${C.f3(Number(s.closeBM.elev))}` : s.type === 'loop' ? `; close on ${s.startBM.name}` : '')],
   ];
 }
@@ -1097,6 +1200,7 @@ function textReport(job, surveys) {
     out.push(`${s.name} · ${TYPE[s.type]} · ${m.three ? '3-wire' : 'single wire'}`);
     if (!m.closed) out.push('*** IN PROGRESS – NOT CLOSED ***');
     out.push(`Start ${s.startBM.name} ${C.f3(Number(s.startBM.elev))}`);
+    if (!m.isSite) out.push(m.pegOn ? `Peg corr ON: C ${C.pegLabel(m.comp.peg.per100)} ft/100ft (test ${usDate(m.pegT.date)}, ${m.pegT.instrument || '—'}) · ${m.comp.peg.applied} corr, ${m.comp.peg.skipped} no dist` : `Peg corr OFF${m.pegT ? ` (test ${usDate(m.pegT.date)} on file)` : ''}`);
     out.push(`ΣBS ${m.comp.sumBS.toFixed(3)}  ΣFS ${m.comp.sumFS.toFixed(3)}  Arith ${m.comp.arith.ok ? 'PASS ✔' : 'FAIL ✕'}`);
     if (m.cl && m.cl.closedOn) {
       out.push(`Closed on ${m.cl.bm.name}: misclose ${sgn(m.cl.misclosure)} ft`);
@@ -1118,18 +1222,19 @@ function textReport(job, surveys) {
 const csvCell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 function csvReport(job, surveys) {
   const lines = [['Job', job.name], ['Project date', usDate(job.date)], ['Description', job.description || ''], ['Client/job #', job.client || ''], ['Units', 'US survey decimal ft'], ['Generated', stamp()], []];
-  lines.push(['Survey', 'Type', 'Method', 'Seq', 'Setup', 'Reading', 'Point', 'Value', 'Top', 'Mid', 'Bot', 'Dist ft', 'HI', 'Elev', 'Adj Elev', 'Check', 'Notes', 'Status']);
+  lines.push(['Survey', 'Type', 'Method', 'Seq', 'Setup', 'Reading', 'Point', 'Value', 'Top', 'Mid', 'Bot', 'Dist ft', 'Peg corr', 'Corrected', 'HI', 'Elev', 'Adj Elev', 'Check', 'Notes', 'Status']);
+  const pegRows = [];
   surveys.forEach((s) => {
     const m = surveyModel(job, s); const adjBy = {}; (m.adj || []).forEach((p) => { if (p.readingIdx >= 0) adjBy[p.readingIdx] = p.adjusted; });
-    let setup = 0; let hi = null; let elev = Number(s.startBM.elev);
+    if (m.pegT) pegRows.push([s.name, m.pegOn ? 'Peg correction ON' : 'Peg correction OFF'], ...pegLines(m.pegT, m.peg).map(([k, v]) => [s.name, k, v]));
     s.readings.forEach((r, i) => {
-      const v = C.valueOf(r, s); const d = C.distOf(r, s); let e = '';
-      if (r.type === 'BS') { setup++; hi = C.round(elev + v, 3); }
-      else { e = C.round(hi - v, 3); if (r.type === 'FS') elev = e; }
+      const inf = m.comp.info[i]; const v = inf.raw; const d = inf.d;
       const tw = r.wires ? C.threeWire(r.wires, s.stadiaK, s.spreadTol) : null;
-      lines.push([s.name, TYPE[s.type], m.three ? '3-wire' : 'single', i + 1, setup, r.type, r.point, C.fmtReading(v, r.wires ? null : r.text), r.wires ? r.wires.t.toFixed(3) : '', r.wires ? r.wires.m.toFixed(3) : '', r.wires ? r.wires.b.toFixed(3) : '', d ?? '', r.type === 'BS' ? C.f3(hi) : '', e === '' ? '' : C.f3(e), adjBy[i] != null ? C.f3(adjBy[i]) : '', tw ? (tw.orderOk && tw.spreadOk ? 'PASS' : 'FAIL') + ` d${tw.spreadDiff.toFixed(3)}` : '', (m.comp.warnings[i] || []).join('; '), m.closed ? 'CLOSED' : 'IN PROGRESS'],);
+      lines.push([s.name, TYPE[s.type], m.three ? '3-wire' : 'single', i + 1, inf.setup, r.type, r.point, C.fmtReading(v, r.wires ? null : r.text), r.wires ? r.wires.t.toFixed(3) : '', r.wires ? r.wires.m.toFixed(3) : '', r.wires ? r.wires.b.toFixed(3) : '', d ?? '',
+        inf.corr != null ? inf.corr.toFixed(3) : m.pegOn && inf.noDist ? 'no dist' : '', m.pegOn ? inf.v.toFixed(3) : '', r.type === 'BS' ? C.f3(inf.hi) : '', inf.elev == null ? '' : C.f3(inf.elev), adjBy[i] != null ? C.f3(adjBy[i]) : '', tw ? (tw.orderOk && tw.spreadOk ? 'PASS' : 'FAIL') + ` d${tw.spreadDiff.toFixed(3)}` : '', (m.comp.warnings[i] || []).join('; '), m.closed ? 'CLOSED' : 'IN PROGRESS'],);
     });
   });
+  if (pegRows.length) lines.push([], ['Survey', 'Peg test', 'Value'], ...pegRows);
   return lines.map((l) => l.map(csvCell).join(',')).join('\r\n');
 }
 
@@ -1153,9 +1258,10 @@ function pdfReport(job, surveys, inc) {
     if (inc.table) {
       const rows = tableRows(m, inc);
       const head = ['STA', 'BS', 'HI', 'FS', 'ELEV', 'DIST'];
+      if (m.pegOn) head.push('PEG CORR');
       if (m.three && inc.threewire) head.push('BS T/M/B', 'FS T/M/B', 'CHECK');
       if (inc.notes) head.push('NOTES');
-      const body = rows.map((r) => { const b = [r.sta, r.bs, r.hi, r.fs, r.elev, r.dist]; if (m.three && inc.threewire) b.push(r.wiresBS.filter(Boolean).join('/'), r.wiresFS.filter(Boolean).join('/'), r.check); if (inc.notes) b.push(r.note); return b.map(winAnsi); });
+      const body = rows.map((r) => { const b = [r.sta, r.bs, r.hi, r.fs, r.elev, r.dist]; if (m.pegOn) b.push(r.peg); if (m.three && inc.threewire) b.push(r.wiresBS.filter(Boolean).join('/'), r.wiresFS.filter(Boolean).join('/'), r.check); if (inc.notes) b.push(r.note); return b.map(winAnsi); });
       doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text('LEVEL BOOK', M, y + 6); y += 10;
       doc.autoTable({ startY: y, head: [head], body, margin: { left: M, right: M, bottom: 50 }, theme: 'plain',
         styles: { font: 'courier', fontSize: m.three && inc.threewire ? 6.5 : 8.5, cellPadding: 3, halign: 'right', textColor: 20 },
@@ -1166,6 +1272,7 @@ function pdfReport(job, surveys, inc) {
         didDrawCell: (d) => { if (d.section === 'body' && d.column.index === 0) { const r = rows[d.row.index]; if (r.bm || r.warn) { doc.setFillColor(...(r.warn ? [227, 116, 0] : [11, 95, 165])); doc.rect(d.cell.x, d.cell.y, 2.5, d.cell.height, 'F'); } } },
       });
       y = doc.lastAutoTable.finalY + 16;
+      if (m.pegOn) { doc.setFont('helvetica', 'italic'); doc.setFontSize(7.5); doc.text(winAnsi('BS/FS are the readings as booked; HI and ELEV use peg-corrected readings (reading - C x sight distance). n/d = no distance, not corrected.'), M, y - 6); y += 6; }
     }
     const block = (title, lines) => {
       if (y > doc.internal.pageSize.getHeight() - 120) { doc.addPage(); y = M; }
@@ -1176,6 +1283,7 @@ function pdfReport(job, surveys, inc) {
       y = doc.lastAutoTable.finalY + 14;
     };
     if (inc.checks) { const c = checksLines(m); block('CHECKS & CLOSURE', c.lines); if (c.warns.length && inc.notes) block('WARNINGS', c.warns.map((w) => ['!', w])); }
+    if (m.pegT && inc.peg !== false) block(`PEG TEST RECORD (${m.pegOn ? 'applied' : 'not applied'})`, pegLines(m.pegT, m.peg));
     if (inc.adjusted) {
       if (m.adj) block(`FINAL ELEVATIONS (adjusted by ${s.adjustMethod === 'distance' ? 'distance' : 'setups'})`, [['Point', 'Measured / Corr / ADJUSTED'], ...m.adj.map((p) => [p.point + (p.side ? ' (IFS)' : ''), `${C.f3(p.elev)}  ${sgn(p.correction)}  ${C.f3(p.adjusted)}`])]);
       else block('ELEVATIONS (unadjusted – not closed)', m.comp.pointElev.map((p) => [p.point + (p.side ? ' (IFS)' : ''), C.f3(p.elev)]));
@@ -1202,19 +1310,21 @@ function previewPages(job, surveys, inc) {
     push(`<table class="kvt">${headerLines(m).map(([k, v]) => `<tr><td style="text-align:left;font-family:Helvetica;font-weight:700;width:28%;background:none">${e(k)}</td><td style="text-align:left;background:none">${e(v)}</td></tr>`).join('')}</table>`, 11);
     if (inc.table) {
       const rows = tableRows(m, inc);
-      const head = ['STA', 'BS', 'HI', 'FS', 'ELEV', 'DIST']; if (m.three && inc.threewire) head.push('BS T/M/B', 'FS T/M/B', 'CHECK'); if (inc.notes) head.push('NOTES');
+      const head = ['STA', 'BS', 'HI', 'FS', 'ELEV', 'DIST']; if (m.pegOn) head.push('PEG'); if (m.three && inc.threewire) head.push('BS T/M/B', 'FS T/M/B', 'CHECK'); if (inc.notes) head.push('NOTES');
       const th = `<tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>`;
       let chunk = []; const flush = () => { if (chunk.length) push(`<table>${th}${chunk.join('')}</table>`, chunk.length + 1); chunk = []; };
       push('<h4>LEVEL BOOK</h4>', 2);
       rows.forEach((r) => {
-        const c = [r.sta, r.bs, r.hi, r.fs, r.elev, r.dist]; if (m.three && inc.threewire) c.push(r.wiresBS.filter(Boolean).join('/'), r.wiresFS.filter(Boolean).join('/'), r.check); if (inc.notes) c.push(r.note);
+        const c = [r.sta, r.bs, r.hi, r.fs, r.elev, r.dist]; if (m.pegOn) c.push(r.peg); if (m.three && inc.threewire) c.push(r.wiresBS.filter(Boolean).join('/'), r.wiresFS.filter(Boolean).join('/'), r.check); if (inc.notes) c.push(r.note);
         chunk.push(`<tr>${c.map((x, i) => `<td style="${i === 0 ? `border-left:3px solid ${r.warn ? '#E37400' : r.bm ? '#0B5FA5' : 'transparent'};${r.bm ? 'font-weight:700' : ''}` : ''}">${e(x)}</td>`).join('')}</tr>`);
         if (lines + chunk.length + 1 >= PAGE_LINES) flush();
       });
       flush();
+      if (m.pegOn) push('<div style="font-style:italic;font-size:7px;color:#444">BS/FS as booked; HI and ELEV use peg-corrected readings (reading − C × dist). n/d = no distance.</div>', 1);
     }
     const block = (t, L) => push(`<h4>${e(t)}</h4><table>${L.map(([k, v]) => `<tr><td style="text-align:left;font-family:Helvetica;font-weight:700;width:38%">${e(k)}</td><td style="text-align:left;${/\bFAIL\b|NOT CLOSED/.test(v) ? 'color:#C5221F;font-weight:700' : /\bPASS\b/.test(v) ? 'color:#1E8E3E;font-weight:700' : ''}">${e(v)}</td></tr>`).join('')}</table>`, L.length + 2);
     if (inc.checks) { const c = checksLines(m); block('CHECKS & CLOSURE', c.lines); if (c.warns.length && inc.notes) block('WARNINGS', c.warns.map((w) => ['⚠', w])); }
+    if (m.pegT && inc.peg !== false) block(`PEG TEST RECORD (${m.pegOn ? 'applied' : 'not applied'})`, pegLines(m.pegT, m.peg));
     if (inc.adjusted) {
       if (m.adj) block(`FINAL ELEVATIONS (adjusted by ${s.adjustMethod === 'distance' ? 'distance' : 'setups'})`, [['Point', 'Measured / Corr / ADJUSTED'], ...m.adj.map((p) => [p.point + (p.side ? ' (IFS)' : ''), `${C.f3(p.elev)}  ${sgn(p.correction)}  ${C.f3(p.adjusted)}`])]);
       else block('ELEVATIONS (unadjusted – not closed)', m.comp.pointElev.map((p) => [p.point + (p.side ? ' (IFS)' : ''), C.f3(p.elev)]));
@@ -1225,11 +1335,11 @@ function previewPages(job, surveys, inc) {
   return pages.map((p, i) => `${p}<div style="margin-top:8px;color:#666;font-size:7.5px;display:flex;justify-content:space-between"><span>Generated ${e(st)} · Level Book v${APP_VERSION}</span><span>Page ${i + 1} of ${pages.length}</span></div>`);
 }
 
-return { APP_VERSION, usDate, stamp, surveyModel, reportTitle, fileBase, textReport, csvReport, pdfReport, previewPages };
+return { APP_VERSION, usDate, stamp, surveyModel, pegStatus, pegLines, reportTitle, fileBase, textReport, csvReport, pdfReport, previewPages };
 })();
 const __m_app = (() => { 'use strict';
 const C = __m_calc;
-const { seedJobs, surveyDefaults, uid } = __m_seed;
+const { seedJobs, seedPegTests, surveyDefaults, uid } = __m_seed;
 const { RodView } = __m_rod;
 const R = __m_report;
 
@@ -1243,6 +1353,8 @@ function load() {
   try { db = JSON.parse(localStorage.getItem(KEY)); } catch (e) { db = null; }
   if (!db || !Array.isArray(db.jobs)) { db = { jobs: seedJobs(), prefs: { theme: localStorage.getItem('lb.theme') || 'sunlight', includes: {} }, seeded: Date.now() }; save(); }
   db.prefs = db.prefs || { theme: 'sunlight', includes: {} }; db.prefs.includes = db.prefs.includes || {};
+  if (!Array.isArray(db.pegTests)) { db.pegTests = seedPegTests(); save(); } // v1.1.0: peg tests live at app level (all jobs)
+  if (!(db.prefs.pegTol > 0)) db.prefs.pegTol = C.PEG_TOL_DEFAULT;
 }
 function save() { try { const json = JSON.stringify(db); localStorage.setItem(KEY, json); localStorage.setItem('lb.theme', db.prefs.theme); N()?.backup(json); } catch (e) { toast('Could not save – storage full?'); } }
 const touch = (job, s) => { const t = Date.now(); job.updated = t; if (s) s.updated = t; save(); };
@@ -1272,6 +1384,7 @@ const I = {
   site: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="20" cy="20" r="12"/><path d="M20 4v8M20 28v8M4 20h8M28 20h8"/><circle cx="20" cy="20" r="2" fill="currentColor"/></svg>',
   ok: '<svg viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 25l9 9 19-20"/></svg>',
   x: '<svg viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"><path d="M13 13l22 22M35 13L13 35"/></svg>',
+  peg: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 34h34"/><path d="M8 34V14M32 34V10"/><path d="M6 14h4M6 19h4M6 24h4M30 10h4M30 15h4M30 20h4"/><path d="M14 22l4-6 4 6M18 16v-3"/><path d="M13 13h21" stroke-dasharray="2 3"/></svg>',
   level: '<svg viewBox="0 0 96 96" width="96" height="96" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><rect x="62" y="10" width="14" height="76" rx="2"/><path d="M62 22h7M62 34h7M62 46h7M62 58h7M62 70h7"/><path d="M16 40h30l-4 10H20z"/><path d="M31 50v12M22 86l9-24 9 24"/><path d="M46 44h12" stroke-dasharray="3 4"/></svg>',
 };
 const topbar = ({ back, title, right = '', wordmark }) => `<header class="topbar">${back ? `<button class="back" data-back="${esc(back.href)}">‹ ${esc(back.label)}</button>` : ''}${wordmark ? '<span class="wordmark">LEVEL BOOK</span><span class="spacer"></span>' : `<span class="title">${esc(title || '')}</span>`}${right}</header>`;
@@ -1362,6 +1475,13 @@ function render() {
       if (h.length === 2) return menuScreen(job);
       if (h[2] === 'new') return setupScreen(job, h[3]);
       if (h[2] === 'share') return shareScreen(job, null);
+      if (h[2] === 'peg') {
+        if (!h[3]) return pegListScreen(job);
+        if (h[3] === 'new') return pegSetupScreen(job);
+        if (h[3] === 'entry') return pegEntryScreen(job);
+        const t = db.pegTests.find((x) => x.id === h[3]); if (t) return pegResultScreen(job, t);
+        return go(`#/j/${job.id}/peg`);
+      }
       if (h[2] === 's') {
         const s = getSurvey(job, h[3]); if (!s) return go(`#/j/${job.id}`);
         const [view, q] = (h[4] || 'book').split('?');
@@ -1490,14 +1610,14 @@ function menuScreen(job) {
     <div class="scroll">
       ${ro ? `<div class="banner"><span><b>Archived</b> · read-only</span><button class="btn blue" id="restore">RESTORE</button></div>` : ''}
       <div class="section-label">${esc(R.usDate(job.date))} · ${esc(job.description || '')}</div>
-      ${[['loop', 'Level Loop', 'Start and close on the same benchmark'], ['run', 'Level Run', 'Carry elevation from one BM to another'], ['site', 'Site Levels', 'One setup, many side shots']].map(([t, n, d]) => `<button class="modecard" data-mode="${t}" ${ro ? 'disabled' : ''}>${I[t]}<div><div class="mt">${n}</div><div class="md">${d}</div></div></button>`).join('')}
+      ${[['loop', 'Level Loop', 'Start and close on the same benchmark'], ['run', 'Level Run', 'Carry elevation from one BM to another'], ['site', 'Site Levels', 'One setup, many side shots'], ['peg', 'Peg Test', pegMenuLine()]].map(([t, n, d]) => `<button class="modecard" data-mode="${t}" ${ro && t !== 'peg' ? 'disabled' : ''}>${I[t]}<div><div class="mt">${n}</div><div class="md">${d}</div></div></button>`).join('')}
       <div class="section-label">Recent</div>
       ${surveys.length ? `<div class="recent">${surveys.map((s) => `<button data-sid="${s.id}"><span class="rn">${esc(s.name)}</span><span class="tag">${SHORT[s.type].toUpperCase()}</span>${s.method === 'three' && s.type !== 'site' ? '<span class="tag blue">3-WIRE</span>' : ''}${statusChip(s)}</button>`).join('')}</div>` : '<div class="empty" style="padding:24px">No surveys in this job yet. Pick a mode above.</div>'}
     </div>
     <div class="pinned"><div class="row2"><button class="btn" id="shareJob">${I.share.replace('<svg', '<svg width="20" height="20"')} SHARE JOB</button><button class="btn" id="editJob">EDIT JOB</button></div></div></div>`;
   bindCommon(root);
   $('#restore') && ($('#restore').onclick = () => { job.archived = false; touch(job); render(); });
-  $$('.modecard').forEach((b) => (b.onclick = () => { b.classList.add('flash'); setTimeout(() => go(`#/j/${job.id}/new/${b.dataset.mode}`), 120); }));
+  $$('.modecard').forEach((b) => (b.onclick = () => { b.classList.add('flash'); setTimeout(() => go(b.dataset.mode === 'peg' ? `#/j/${job.id}/peg` : `#/j/${job.id}/new/${b.dataset.mode}`), 120); }));
   $$('.recent button').forEach((b) => (b.onclick = () => go(`#/j/${job.id}/s/${b.dataset.sid}/book`)));
   $('#shareJob').onclick = () => go(`#/j/${job.id}/share`);
   $('#editJob').onclick = () => (ro ? toast('Archived jobs are read-only') : jobSheet(job));
@@ -1532,6 +1652,7 @@ function setupScreen(job, type) {
       ${sec('Starting benchmark', `<label class="field"><span>BM name</span><input class="input" id="bmn" value="BM-1" autocomplete="off"></label><label class="field"><span>Elevation</span>${elevInput('bme')}</label>`)}
       ${type === 'run' ? sec('Closing benchmark', `<label class="field"><span>BM name</span><input class="input" id="cbn" placeholder="e.g. BM-7" autocomplete="off"></label><label class="field"><span>Known elevation</span>${elevInput('cbe')}</label>`) : ''}
       ${type === 'loop' ? sec('Closing benchmark', `<div class="msg" style="color:var(--muted)">A loop closes back on the starting benchmark.</div>`) : ''}
+      ${type === 'site' ? '' : sec('Peg correction', pegSetupBlock())}
       ${sec('Checks', `${type === 'site' ? '' : `<div class="field"><span>Closure standard</span><button class="selectbtn" id="std"><span id="stdv">${C.STANDARDS[0].label} · 0.050 ft√mi</span><span>▾</span></button></div><label class="field" id="customRow" hidden><span>Custom constant (ft√mi)</span><input class="input num" id="ck" inputmode="decimal" value="0.05"></label>`}
         <div class="field"><span>Rod length</span><button class="selectbtn" id="rodl"><span id="rodlv">16 ft</span><span>▾</span></button></div>
         <label class="field"><span>BS/FS imbalance limit</span><div class="suffix" data-suffix="ft"><input class="input num" id="imb" inputmode="decimal" value="10"></div></label>
@@ -1540,6 +1661,10 @@ function setupScreen(job, type) {
     <div class="pinned"><button class="btn primary block" id="start" disabled>START BOOK ▶</button></div></div>`;
   bindCommon(root);
   const st = { inst: 'Automatic level', method: 'single', std: '3rd', rod: 16 };
+  const latest = C.latestPeg(db.pegTests); st.pegOn = !!latest && !latest.sample;
+  const pegSw = $('#pegSw');
+  if (pegSw) { setSwitch(pegSw, st.pegOn); pegSw.onclick = () => { if (!latest) return; st.pegOn = !st.pegOn; setSwitch(pegSw, st.pegOn); }; }
+  $('#pegShoot') && ($('#pegShoot').onclick = () => go(`#/j/${job.id}/peg/new`));
   $('#inst').onclick = () => choose('Instrument', INSTRUMENTS.map((v) => ({ v, label: v })), st.inst, (v) => { st.inst = v; $('#instv').textContent = v; });
   $$('#method button').forEach((b) => (b.onclick = () => { st.method = b.dataset.v; $$('#method button').forEach((x) => x.setAttribute('aria-pressed', x === b)); $('#threeOpts').hidden = st.method !== 'three'; }));
   const stdLabel = (x) => (x.k ? `${x.label} · ${x.k} ft√mi` : x.label);
@@ -1557,6 +1682,7 @@ function setupScreen(job, type) {
       closeBM: type === 'run' ? { name: $('#cbn').value.trim().toUpperCase(), elev: C.round(parseFloat($('#cbe').value), 3) } : { name: '', elev: null },
       standard: st.std, customK: parseFloat($('#ck')?.value) || 0.05, rodLength: st.rod,
       imbalanceLimit: parseFloat($('#imb').value) || 10, maxSight: parseFloat($('#maxs').value) || 300,
+      peg: type !== 'site' && latest ? { on: st.pegOn, test: pegSnap(latest) } : null,
     });
     job.surveys.push(s); touch(job, s); entry = null; go(`#/j/${job.id}/s/${s.id}/entry`);
   };
@@ -1608,8 +1734,10 @@ function entryEval(s, st) {
   if (out.dist != null && s.maxSight && out.dist > s.maxSight) out.warns.push(`⚠ Sight ${out.dist} ft > max ${s.maxSight} ft`);
   if (st.type === 'FS' && out.dist != null) { const su = ctx.setups[ctx.setups.length - 1]; if (su && su.bsDist != null && Math.abs(su.bsDist - out.dist) > s.imbalanceLimit) out.warns.push(`⚠ Setup imbalance ${C.round(Math.abs(su.bsDist - out.dist), 1)} ft > ${s.imbalanceLimit} ft`); }
   if (out.value != null && !isNaN(out.value)) {
-    if (st.type === 'BS') out.result = { label: 'New HI', v: C.round(ctx.lastElev + out.value, 3) };
-    else if (ctx.hi != null) out.result = { label: 'New elev', v: C.round(ctx.hi - out.value, 3) };
+    const peg = C.pegFor(s); out.peg = peg ? C.corrected(out.value, out.dist, peg) : null;
+    const v = out.peg ? out.peg.v : out.value;
+    if (st.type === 'BS') out.result = { label: 'New HI', v: C.round(ctx.lastElev + v, 3) };
+    else if (ctx.hi != null) out.result = { label: 'New elev', v: C.round(ctx.hi - v, 3) };
   }
   out.impossible = st.three ? Object.values(out.wires).some((w) => w.impossible) || !!(out.tw && !out.tw.orderOk) : out.wires.r.impossible;
   out.complete = out.value != null && !isNaN(out.value) && st.point.trim() !== '';
@@ -1671,6 +1799,7 @@ function drawEntry(job, s) {
     ${st.three ? `${rbox('t', 'TOP', 'w3')}${rbox('m', 'MID', 'w3')}${rbox('b', 'BOT', 'w3')}
       <div class="rescard"><div class="result"><span class="lbl">MEAN </span>${ev.tw ? ev.tw.mean.toFixed(3) : '—'}</div><div class="result"><span class="lbl">DIST </span>${ev.dist != null && !isNaN(ev.dist) ? ev.dist.toFixed(1) + ' ft' : '—'}</div>${resLine}</div>`
     : `${rbox('reading', 'READING', '')}${rbox('dist', 'DIST ft', 'small')}${resLine}`}
+    ${ev.peg && !ev.impossible ? (ev.peg.noDist ? '<div class="msg pegmsg nd">Peg: no distance – reading used as is</div>' : `<div class="msg pegmsg">Peg ${sgn(ev.peg.corr)} → ${ev.peg.v.toFixed(3)}</div>`) : ''}
     ${ev.errors.map((e) => `<div class="msg err">✕ ${esc(e)}</div>`).join('')}${ev.warns.map((w) => `<div class="msg warn">${esc(w)}</div>`).join('')}
     ${ev.acceptable && !st.accepted ? '<button class="btn accept" id="accept">Accept anyway</button>' : ''}${ev.acceptable && st.accepted ? '<div class="msg warn">⚠ Accepted – note added to row</div>' : ''}
     ${st.editIdx != null && st.editIdx === s.readings.length - 1 ? '<button class="btn danger accept" id="delR">Delete this reading</button>' : ''}`;
@@ -1727,10 +1856,21 @@ const bookUI = { compact: false, editHint: false };
 function bookScreen(job, s) {
   const ro = job.archived; const comp = C.computeSurvey(s); const three = s.method === 'three' && s.type !== 'site';
   const root = app();
-  const rd = (v, text, w) => {
+  const rd0 = (v, text, w) => {
     if (v == null) return '';
     if (w && three && !bookUI.compact) { const tw = C.threeWire(w, s.stadiaK, s.spreadTol); const good = tw.orderOk && tw.spreadOk; return `<div class="tw"><small>${w.t.toFixed(3)}</small><small>${w.m.toFixed(3)}</small><small>${w.b.toFixed(3)}</small><b>${tw.mean.toFixed(3)}</b><span class="spread ${good ? 'ok' : 'bad'}">${good ? '✔' : '✕'}Δ${tw.spreadDiff.toFixed(3)}</span></div>`; }
     return w ? `<b>${C.threeWire(w, s.stadiaK, s.spreadTol).mean.toFixed(3)}</b>` : C.fmtReading(v, text);
+  };
+  // With peg correction: corrected value (used in HI/elev) bold, the booked raw reading small beneath.
+  const rd = (r, p) => {
+    const v = r[p], w = r[p + 'Wires'];
+    if (v == null) return '';
+    if (r[p + 'Corr'] != null) {
+      if (w && three && !bookUI.compact) return `${rd0(v, null, w).replace(/<b>[^<]*<\/b>/, `<small>mean ${C.threeWire(w, s.stadiaK, s.spreadTol).mean.toFixed(3)}</small>`)}<div class="pc"><b>${v.toFixed(3)}</b><small>peg ${sgn(r[p + 'Corr'])}</small></div>`;
+      return `<div class="pc"><b>${v.toFixed(3)}</b><small>raw ${w ? r[p + 'Raw'].toFixed(3) : C.fmtReading(r[p + 'Raw'], r[p + 'RawText'])}</small></div>`;
+    }
+    if (r[p + 'NoPeg']) return `<div class="pc">${rd0(v, r[p + 'Text'], w)}<small class="nd" title="No sight distance – not peg-corrected">no dist</small></div>`;
+    return rd0(v, r[p + 'Text'], w);
   };
   let lastSetup = 0;
   const rowsHtml = comp.rows.map((r, i) => {
@@ -1738,13 +1878,13 @@ function bookScreen(job, s) {
     lastSetup = r.setup;
     const dist = [r.bsDist, r.fsDist].filter((x) => x != null).join(three ? '<br>' : ' / ');
     return `<tr class="${cls}" data-i="${i}"><td>${esc(r.sta)}${r.ifs ? '<br><span class="tag">IFS</span>' : ''}${r.warn.length ? ` <span class="wf" title="${esc(r.warn.join('; '))}">⚠</span>` : ''}</td>
-      <td>${rd(r.bs, r.bsText, r.bsWires)}</td><td>${r.hi != null ? C.f3(r.hi) : ''}</td><td>${rd(r.fs, r.fsText, r.fsWires)}</td><td><b>${C.f3(r.elev)}</b></td>
+      <td>${rd(r, 'bs')}</td><td>${r.hi != null ? C.f3(r.hi) : ''}</td><td>${rd(r, 'fs')}</td><td><b>${C.f3(r.elev)}</b></td>
       <td class="${three ? '' : 'landscape-only'}">${dist}</td><td class="landscape-only" style="font-family:var(--sans);font-size:13px;text-align:left;max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(r.warn.join('; '))}</td></tr>`;
   }).join('');
   const balWarn = Math.abs(comp.imbalance) > s.imbalanceLimit;
   root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}`, label: 'Job' }, title: s.name, right: `<span class="tag">${SHORT[s.type].toUpperCase()}</span>${three ? '<span class="tag blue">3-WIRE</span>' : ''}<button class="iconbtn" id="shareBtn" aria-label="Share report">${I.share}</button>` })}
     ${bookUI.editHint ? '<div class="hint">Tap a row to edit its reading</div>' : ''}
-    ${three ? `<div class="booktools"><button class="btn" id="compact" style="min-height:44px">${bookUI.compact ? '☑' : '☐'} Compact</button><span class="msg" style="color:var(--muted)">K ${s.stadiaK} · tol ${s.spreadTol} ft</span></div>` : ''}
+    ${three || s.type !== 'site' ? `<div class="booktools">${s.type !== 'site' ? pegChip(s, comp) : ''}${three ? `<button class="btn" id="compact" style="min-height:44px">${bookUI.compact ? '☑' : '☐'} Compact</button><span class="msg" style="color:var(--muted)">K ${s.stadiaK} · tol ${s.spreadTol} ft</span>` : ''}</div>` : ''}
     <div class="tablewrap"><table class="book${three ? ' three' : ''}"><thead><tr><th>STA</th><th>BS</th><th>HI</th><th>FS</th><th>ELEV</th><th class="${three ? '' : 'landscape-only'}">DIST</th><th class="landscape-only" style="text-align:left">NOTES</th></tr></thead><tbody>${rowsHtml}</tbody></table>
     ${s.readings.length ? '' : '<div class="empty">No readings yet. Tap + NEXT SETUP to take the first backsight.</div>'}</div>
     <div class="summary">
@@ -1759,6 +1899,7 @@ function bookScreen(job, s) {
   bindCommon(root);
   $('#shareBtn').onclick = () => go(`#/j/${job.id}/s/${s.id}/share`);
   $('#compact') && ($('#compact').onclick = () => { bookUI.compact = !bookUI.compact; bookScreen(job, s); });
+  $('#pegBtn') && ($('#pegBtn').onclick = () => pegSheet(job, s, () => bookScreen(job, s)));
   if (!ro) {
     $('#next').onclick = () => { entry = null; go(`#/j/${job.id}/s/${s.id}/entry`); };
     $('#side').onclick = () => { entry = null; go(`#/j/${job.id}/s/${s.id}/entry?type=IFS`); };
@@ -1774,7 +1915,7 @@ function bookScreen(job, s) {
     if (ro) return toast('Archived job – read-only');
     const r = comp.rows[Number(tr.dataset.i)]; bookUI.editHint = false;
     const open = (idx) => { entry = null; go(`#/j/${job.id}/s/${s.id}/entry?edit=${idx}`); };
-    if (r.bsIdx != null && r.fsIdx != null) choose(`Edit ${r.sta}`, [{ v: String(r.fsIdx), label: `FS ${rdTxt(r.fs, r.fsText, r.fsWires)}` }, { v: String(r.bsIdx), label: `BS ${rdTxt(r.bs, r.bsText, r.bsWires)}` }], null, (v) => open(Number(v)));
+    if (r.bsIdx != null && r.fsIdx != null) choose(`Edit ${r.sta}`, [{ v: String(r.fsIdx), label: `FS ${rdTxt(r.fsRaw ?? r.fs, r.fsRawText, r.fsWires)}` }, { v: String(r.bsIdx), label: `BS ${rdTxt(r.bsRaw ?? r.bs, r.bsRawText, r.bsWires)}` }], null, (v) => open(Number(v)));
     else if (r.bsIdx != null || r.fsIdx != null) open(r.bsIdx ?? r.fsIdx);
   }));
 }
@@ -1792,6 +1933,8 @@ function closureScreen(job, s) {
   root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}/s/${s.id}/book`, label: 'Book' }, title: `Closure · ${s.name}`, right: `<button class="iconbtn" id="shareBtn" aria-label="Share report">${I.share}</button>` })}
     <div class="scroll">
       <div class="big ${verdict[0]}" role="status">${verdict[2]}<div><div class="bw">${verdict[1]}</div><div>${cl.closedOn ? `Misclosure ${sgn(cl.misclosure)} ft · allowable ${cl.allowable == null ? 'n/a' : '±' + cl.allowable.toFixed(3)} ft` : `Last FS must be on ${esc(cl.bm?.name || '')}`}</div></div></div>
+      <div class="section-label">Peg correction</div>
+      <div class="card" style="padding:4px 16px">${pegSwitchRow(s, comp, job.archived)}</div>
       <div class="section-label">Closure</div>
       <div class="card kv">
         <span class="k">Closed on</span><span class="v">${esc(cl.bm?.name || '—')}</span>
@@ -1822,18 +1965,19 @@ function closureScreen(job, s) {
   bindCommon(root);
   $('#shareBtn').onclick = $('#shareRep').onclick = () => go(`#/j/${job.id}/s/${s.id}/share`);
   $$('#adjm button').forEach((b) => (b.onclick = () => { s.adjustMethod = b.dataset.v; touch(job, s); closureScreen(job, s); }));
+  bindPegSwitch(job, s, () => closureScreen(job, s));
   $('#reopen').onclick = () => { s.closed = false; touch(job, s); go(`#/j/${job.id}/s/${s.id}/book`); };
   $('#print').onclick = () => { const doc = R.pdfReport(job, [s], includesFor(job)); openBlob(doc.output('blob'), R.fileBase(job, s) + '.pdf'); };
 }
 
 // ---------- 6. Share ----------
-const INC_DEFAULT = { table: true, checks: true, adjusted: true, threewire: false, notes: false };
+const INC_DEFAULT = { table: true, checks: true, adjusted: true, threewire: false, notes: false, peg: true };
 const includesFor = (job) => ({ ...INC_DEFAULT, ...(db.prefs.includes[job.id] || {}) });
 const shareUI = { fmt: 'pdf', page: 0 };
 function shareScreen(job, s) {
   const surveys = s ? [s] : job.surveys; const root = app(); const inc = includesFor(job);
   const back = s ? `#/j/${job.id}/s/${s.id}/${s.closed && s.type !== 'site' ? 'close' : 'book'}` : `#/j/${job.id}`;
-  const opts = [['table', 'Level book table'], ['checks', 'Checks & closure'], ['adjusted', 'Adjusted elevations'], ['threewire', 'Three-wire detail'], ['notes', 'Notes & warnings']];
+  const opts = [['table', 'Level book table'], ['checks', 'Checks & closure'], ['adjusted', 'Adjusted elevations'], ['threewire', 'Three-wire detail'], ['peg', 'Peg test record'], ['notes', 'Notes & warnings']];
   root.innerHTML = `<div class="screen">${topbar({ back: { href: back, label: s ? 'Back' : 'Job' }, title: 'SHARE REPORT' })}
     <div class="scroll">
       <div class="section-label">Format</div>
@@ -1907,11 +2051,234 @@ function downloadBlob(blob, name) {
 }
 function openBlob(blob, name) { if (N()) return downloadBlob(blob, name); const url = URL.createObjectURL(blob); const w = window.open(url, '_blank'); if (!w) downloadBlob(blob, name); setTimeout(() => URL.revokeObjectURL(url), 120000); }
 
+// ---------- Peg test (two-peg collimation check) ----------
+const pegEval = (t) => C.pegTest(t, db.prefs.pegTol || C.PEG_TOL_DEFAULT);
+const pegSnap = (t) => ({ tol: db.prefs.pegTol || C.PEG_TOL_DEFAULT, ...JSON.parse(JSON.stringify(t)) });
+const pegShort = (t) => { const p = pegEval(t); return `${R.usDate(t.date)} · C ${C.pegLabel(p.per100)} ft/100 ft`; };
+function pegMenuLine() {
+  const t = C.latestPeg(db.pegTests);
+  return t ? `Two-peg collimation check<br><span class="mono">Last ${esc(R.usDate(t.date))} · ${C.pegLabel(pegEval(t).per100)}${t.sample ? ' (sample)' : ''}</span>` : 'Two-peg collimation check';
+}
+function setSwitch(el, on) { el.setAttribute('aria-checked', String(!!on)); }
+const pegPass = (t) => { const p = pegEval(t); return p.pass ? '<span class="chip closed">✔ within tol</span>' : '<span class="chip check">⚠ over tol</span>'; };
+function pegSetupBlock() {
+  const t = C.latestPeg(db.pegTests);
+  if (!t) return `<div class="switchrow"><div class="sw-l"><div class="sw-t">Apply peg correction</div><div class="sw-d">No peg test yet</div></div><button class="switch" id="pegSw" role="switch" aria-checked="false" aria-label="Peg correction" disabled></button></div>
+    <button class="btn block" id="pegShoot" style="margin-top:8px">${I.peg.replace('<svg', '<svg width="22" height="22"')} SHOOT A PEG TEST</button>`;
+  return `<div class="switchrow"><div class="sw-l"><div class="sw-t">Apply peg correction</div><div class="sw-d mono">${esc(pegShort(t))}</div><div class="sw-d">${esc(t.instrument || '—')}${t.sample ? ' · <span class="tag">SAMPLE</span>' : ''}</div></div><button class="switch" id="pegSw" role="switch" aria-label="Peg correction"></button></div>
+    <div class="msg" style="font-weight:400;color:var(--muted);margin-top:8px">Reading − C × sight distance on every BS/FS/IFS with a distance (three-wire: stadia distance). Single-wire shots without a distance stay as read.${t.sample ? ' <b>The latest test is SAMPLE data, so this starts OFF – shoot your own.</b>' : ''}</div>`;
+}
+function pegChip(s, comp) {
+  const on = comp.peg; const t = s.peg?.test;
+  const txt = on ? `PEG ON · ${C.pegLabel(on.per100)}` : t || C.latestPeg(db.pegTests) ? 'PEG OFF' : 'NO PEG TEST';
+  return `<button class="btn pegbtn${on ? ' on' : ''}" id="pegBtn" style="min-height:44px">${txt} ▾</button>${on && on.skipped ? `<span class="msg" style="color:var(--muted)">${on.skipped} uncorrected (no dist)</span>` : ''}`;
+}
+function pegSwitchRow(s, comp, ro) {
+  const t = s.peg?.test; const latest = C.latestPeg(db.pegTests); const on = comp.peg;
+  const d = on ? `C ${C.pegLabel(on.per100)} ft/100 ft · test ${R.usDate(t.date)}<br>${on.applied} corrected${on.skipped ? ` · ${on.skipped} no distance` : ''}`
+    : t ? `Off · raw readings (test ${R.usDate(t.date)} on file)` : latest ? 'Off · raw readings' : 'No peg test yet';
+  return `<div class="switchrow"><div class="sw-l"><div class="sw-t">Apply peg correction</div><div class="sw-d mono">${d}</div></div><button class="switch" id="pegSw" role="switch" aria-checked="${!!on}" aria-label="Peg correction" ${ro || (!t && !latest) ? 'disabled' : ''}></button></div>
+    <button class="linkbtn" id="pegMore">Peg test options ›</button>`;
+}
+function togglePeg(job, s) {
+  const latest = C.latestPeg(db.pegTests);
+  if (!s.peg || !s.peg.test) { if (!latest) return toast('No peg test yet'); s.peg = { on: true, test: pegSnap(latest) }; }
+  else s.peg.on = !s.peg.on;
+  touch(job, s); toast(s.peg.on ? `Peg correction ON · C ${C.pegLabel(pegEval(s.peg.test).per100)}` : 'Peg correction OFF – raw readings');
+}
+function bindPegSwitch(job, s, rerender) {
+  const sw = $('#pegSw'); if (sw) sw.onclick = () => { togglePeg(job, s); rerender(); };
+  const m = $('#pegMore'); if (m) m.onclick = () => pegSheet(job, s, rerender);
+}
+function pegSheet(job, s, rerender) {
+  const ro = job.archived; const comp = C.computeSurvey(s); const t = s.peg?.test; const latest = C.latestPeg(db.pegTests);
+  const p = t ? pegEval(t) : null; const newer = latest && (!t || latest.id !== t.id);
+  const sh = sheet('Peg correction', `${pegSwitchRow(s, comp, ro)}
+    ${t ? `<div class="section-label">Peg test used by this ${SHORT[s.type].toLowerCase()}</div><div class="card kv" style="font-size:15px">
+      <span class="k">Date</span><span class="v">${esc(R.usDate(t.date))}</span><span class="k">Instrument</span><span class="v" style="font-family:var(--sans)">${esc(t.instrument || '—')}</span>
+      <span class="k">C</span><span class="v">${C.pegLabel(p.per100)} ft/100 ft</span><span class="k">Result</span><span class="v">${pegPass(t)}</span></div>
+      <div class="msg" style="font-weight:400;color:var(--muted);margin-top:6px">A copy of the test is saved with this book, so newer peg tests never change it unless you pick “Use latest”.</div>` : ''}
+    ${newer && !ro ? `<button class="btn block" id="useLatest" style="margin-top:12px">Use latest peg test · ${esc(pegShort(latest))}</button>` : ''}
+    <button class="listbtn" id="pegList" style="margin-top:12px">${I.peg.replace('<svg', '<svg width="22" height="22"')} View peg tests</button>`);
+  const refresh = () => { sh.close(); rerender(); pegSheet(job, s, rerender); };
+  const sw = $('#pegSw', sh.el); if (sw) sw.onclick = () => { togglePeg(job, s); refresh(); };
+  $('#pegMore', sh.el)?.remove();
+  $('#useLatest', sh.el) && ($('#useLatest', sh.el).onclick = () => { s.peg = { on: true, test: pegSnap(latest) }; touch(job, s); toast(`Using peg test ${R.usDate(latest.date)}`); refresh(); });
+  $('#pegList', sh.el).onclick = () => { sh.close(); go(`#/j/${job.id}/peg`); };
+}
+function pegListScreen(job) {
+  const root = app(); const tests = [...db.pegTests].sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created || 0) - (a.created || 0));
+  const row = (t, i) => { const p = pegEval(t); return `<button data-pid="${t.id}"><span class="rn"><b class="mono">${esc(R.usDate(t.date))}</b> · ${esc(t.instrument || '—')}${t.sample ? ' <span class="tag">SAMPLE</span>' : ''}${i === 0 ? ' <span class="tag blue">LATEST</span>' : ''}<br><span class="mono" style="font-size:15px;color:var(--muted)">C ${C.pegLabel(p.per100)} ft/100 ft</span></span>${p.pass ? '<span class="chip closed">✔</span>' : '<span class="chip check">⚠</span>'}</button>`; };
+  root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}`, label: 'Job' }, title: 'Peg Tests', right: sysIcons() })}
+    <div class="scroll">
+      <div class="card" style="display:flex;gap:16px;align-items:center;margin-top:8px">${pegDiagram(70)}</div>
+      <div class="msg" style="font-weight:400;color:var(--muted);margin:8px 4px">Shared by all jobs. New loops and runs use the latest test; each book keeps a copy of the one it used. Tolerance ±${db.prefs.pegTol} ft/100 ft (Settings).</div>
+      <div class="section-label">Tests</div>
+      ${tests.length ? `<div class="recent" id="pegs">${tests.map(row).join('')}</div>` : `<div class="empty">${I.peg.replace('<svg', '<svg width="64" height="64"')}<h2>No peg tests yet</h2><p>Check your level before a loop: two pegs about 200 ft apart.</p></div>`}
+    </div>
+    <div class="pinned"><button class="btn primary block" id="newPeg">＋&nbsp; NEW PEG TEST</button></div></div>`;
+  bindCommon(root);
+  $$('#pegs button').forEach((b) => (b.onclick = () => go(`#/j/${job.id}/peg/${b.dataset.pid}`)));
+  $('#newPeg').onclick = () => go(`#/j/${job.id}/peg/new`);
+}
+// Small field diagram of the two setups.
+function pegDiagram(h = 70) {
+  const lvl = (x, y) => `<path d="M${x - 5} ${y + 14}l5-10 5 10M${x} ${y + 4}v-5" stroke="currentColor" stroke-width="1.6" fill="none"/><rect x="${x - 6}" y="${y - 5}" width="12" height="5" rx="1" fill="var(--yellow)" stroke="currentColor" stroke-width="1.2"/>`;
+  const peg = (x, y, l) => `<path d="M${x} ${y + 14}v-26" stroke="currentColor" stroke-width="2.5"/><text x="${x}" y="${y + 26}" text-anchor="middle" font-size="10" font-weight="800" fill="currentColor">${l}</text>`;
+  return `<svg viewBox="0 0 300 ${h * 1.6}" width="100%" height="${h * 1.6}" style="color:var(--text);font-family:var(--sans)">
+    <text x="0" y="12" font-size="10" font-weight="800" fill="var(--muted)">SETUP 1 · MIDWAY</text>${peg(60, 30, 'A')}${peg(250, 30, 'B')}${lvl(155, 30)}
+    <path d="M70 26H240" stroke="var(--blue)" stroke-dasharray="3 3"/><text x="155" y="60" text-anchor="middle" font-size="9" fill="var(--muted)">D/2 · D/2</text>
+    <text x="0" y="78" font-size="10" font-weight="800" fill="var(--muted)">SETUP 2 · NEAR A</text>${peg(60, 96, 'A')}${peg(250, 96, 'B')}${lvl(36, 96)}
+    <path d="M44 92H240" stroke="var(--blue)" stroke-dasharray="3 3"/><text x="150" y="${h * 1.6 - 2}" text-anchor="middle" font-size="9" fill="var(--muted)">dA · dB</text></svg>`;
+}
+let pegDraft = null;
+function pegSetupScreen(job) {
+  const root = app(); const last = C.latestPeg(db.pegTests.filter((t) => !t.sample));
+  const num = (id, v, suffix = 'ft') => `<div class="suffix" data-suffix="${suffix}"><input class="input num" id="${id}" inputmode="decimal" autocomplete="off" value="${v}"></div>`;
+  const sec = (label, body) => `<div><div class="section-label">${label}</div><div class="card">${body}</div></div>`;
+  root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}/peg`, label: 'Back' }, title: 'New Peg Test', right: sysIcons() })}
+    <div class="scroll">
+      ${sec('Instrument', `<label class="field"><span>Date</span><input class="input mono" id="pd" type="date" value="${todayISO()}"></label>
+        <label class="field"><span>Instrument (make / serial)</span><input class="input" id="pin" value="${esc(last?.instrument || '')}" placeholder="e.g. Auto level AT-B4 #41722" autocomplete="off"></label>
+        <label class="field"><span>Observer</span><input class="input" id="pob" value="${esc(last?.observer || '')}" autocomplete="off"></label>
+        <div class="field"><span>Rod length</span><button class="selectbtn" id="prl"><span id="prlv">16 ft</span><span>▾</span></button></div>`)}
+      ${sec('Pegs & sights', `${pegDiagram(56)}
+        <label class="field" style="margin-top:12px"><span>Peg spacing A–B (D)</span>${num('pD', 200)}</label>
+        <div class="msg" style="font-weight:400;color:var(--muted);margin:-8px 0 16px">Setup 1 is midway: <span class="mono" id="mid">100.0 / 100.0 ft</span></div>
+        <div class="row2"><label class="field"><span>Setup 2 → A</span>${num('pA2', 10)}</label><label class="field"><span>Setup 2 → B</span>${num('pB2', 210)}</label></div>
+        <div class="msg" style="font-weight:400;color:var(--muted)">Default: level 10 ft behind peg A, so B = D + 10. Pace or tape the sights.</div>`)}
+    </div>
+    <div class="pinned"><button class="btn primary block" id="pstart">START PEG TEST ▶</button></div></div>`;
+  bindCommon(root);
+  let rod = 16; let bEdited = false;
+  $('#prl').onclick = () => choose('Rod length', [13, 14, 16, 25].map((v) => ({ v: String(v), label: `${v} ft` })), String(rod), (v) => { rod = Number(v); $('#prlv').textContent = `${v} ft`; });
+  const f = (id) => parseFloat($(id).value);
+  const upd = () => {
+    const D = f('#pD'); if (!bEdited && D > 0 && f('#pA2') >= 0) $('#pB2').value = String(C.round(D + f('#pA2'), 1));
+    $('#mid').textContent = D > 0 ? `${(D / 2).toFixed(1)} / ${(D / 2).toFixed(1)} ft` : '—';
+    $('#pstart').disabled = !(D >= 20 && f('#pA2') >= 0 && f('#pB2') > 0 && Math.abs(f('#pB2') - f('#pA2')) >= 20 && $('#pin').value.trim());
+  };
+  $('#pB2').addEventListener('input', () => (bEdited = true));
+  $$('input', root).forEach((i) => i.addEventListener('input', upd)); upd();
+  $('#pstart').onclick = () => {
+    pegDraft = { jobId: job.id, test: { id: uid(), date: $('#pd').value || todayISO(), instrument: $('#pin').value.trim(), observer: $('#pob').value.trim(), spacing: f('#pD'), dA2: f('#pA2'), dB2: f('#pB2'), a1: null, b1: null, a2: null, b2: null, rodLength: rod, jobName: job.name, created: Date.now() },
+      step: 1, active: 'a1', a1: '', b1: '', a2: '', b2: '' };
+    go(`#/j/${job.id}/peg/entry`);
+  };
+}
+function pegEntryScreen(job) {
+  if (!pegDraft || pegDraft.jobId !== job.id) return go(`#/j/${job.id}/peg/new`);
+  const root = app(); const st = pegDraft;
+  root.innerHTML = `<div class="screen">
+    <div class="strip"><button class="back" id="pback" aria-label="Back" style="font-size:28px;padding:0 8px">‹</button><div class="st-l"><div class="st1"><span id="st1"></span> <span class="tag blue">PEG</span></div><div class="st2" id="st2"></div></div></div>
+    <div class="entry-mid"><div class="rodcol"><svg id="rod" role="img" aria-label="Level rod"></svg></div><div class="panel" id="panel"></div></div>
+    <div class="keypad" id="keypad">
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button><button class="fn" data-k="back" aria-label="Backspace">⌫</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button><button class="confirm" data-k="ok" id="confirm">CONFIRM</button>
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k=".">.</button><button data-k="0">0</button><button class="fn" data-k="clr">CLR</button><button class="fn" data-k="next">NEXT ↓</button>
+    </div></div>`;
+  $('#pback').onclick = async () => { if (st.a1 || st.b1 || st.a2 || st.b2) { if (!(await confirmDialog({ title: 'Discard peg test?', text: 'The readings you entered will be lost.', ok: 'Discard', danger: true }))) return; } pegDraft = null; go(`#/j/${job.id}/peg`); };
+  rodView = new RodView($('#rod'));
+  const fields = () => (st.step === 1 ? ['a1', 'b1'] : ['a2', 'b2']);
+  const key = (k) => {
+    const f = st.active;
+    if (k === 'ok') return pegConfirm(job);
+    if (k === 'next') { const fs = fields(); st.active = fs[(fs.indexOf(f) + 1) % 2]; return drawPeg(job); }
+    if (k === 'clr') { st[f] = ''; return drawPeg(job); }
+    if (k === 'back') { st[f] = st[f].slice(0, -1); return drawPeg(job); }
+    let v = st[f];
+    if (k === '.') { if (v.includes('.')) return; v = (v || '0') + '.'; }
+    else { const [ip, dp] = v.split('.'); if (dp == null && (ip || '').replace(/^0/, '').length >= 2) return; if (dp != null && dp.length >= 3) return; v = v === '0' ? k : v + k; }
+    st[f] = v;
+    if (/\.\d{3}$/.test(v) && f === fields()[0] && !st[fields()[1]]) st.active = fields()[1]; // auto-advance A → B
+    drawPeg(job);
+  };
+  $$('#keypad button').forEach((b) => b.addEventListener('click', () => key(b.dataset.k)));
+  window.onresize = () => rodView && rodView.draw();
+  drawPeg(job);
+}
+const pegFields = () => (pegDraft.step === 1 ? ['a1', 'b1'] : ['a2', 'b2']);
+const pnum = (x) => (x === '' || x === '.' || x == null ? null : parseFloat(x));
+function pegDraftTest() { const st = pegDraft; return { ...st.test, a1: pnum(st.a1), b1: pnum(st.b1), a2: pnum(st.a2), b2: pnum(st.b2) }; }
+function drawPeg(job) {
+  const st = pegDraft; const t = st.test; const L = t.rodLength || 16; const ev = pegEval(pegDraftTest());
+  const errOf = (k) => { const e = C.readingError(pnum(st[k]), L); return e ? (e === 'over' ? `over rod length (${L} ft)` : 'below zero') : null; };
+  const dA = st.step === 1 ? t.spacing / 2 : t.dA2, dB = st.step === 1 ? t.spacing / 2 : t.dB2;
+  $('#st1').textContent = st.step === 1 ? 'PEG TEST · SETUP 1 · MIDWAY' : 'PEG TEST · SETUP 2 · NEAR A';
+  $('#st2').innerHTML = `<small>→A</small> ${dA.toFixed(1)} <small>→B</small> ${dB.toFixed(1)} <small>ft</small>`;
+  const rbox = (k, label) => { const bad = errOf(k); return `<div class="rbox w3${st.active === k ? ' active' : ''}${bad ? ' bad' : ''}" data-f="${k}" role="textbox" aria-label="${label}"><span class="lab">${label}</span><span class="val">${st[k] ? esc(st[k]) : '<span class="ph">–.–––</span>'}</span></div>`; };
+  const d1 = st.a1 && st.b1 ? C.round(pnum(st.a1) - pnum(st.b1), 3) : null; const d2 = st.a2 && st.b2 ? C.round(pnum(st.a2) - pnum(st.b2), 3) : null;
+  const errs = pegFields().map(errOf).filter(Boolean);
+  const p = $('#panel');
+  p.innerHTML = `<div class="seg" id="pstep"><button data-v="1" aria-pressed="${st.step === 1}">Setup 1</button><button data-v="2" aria-pressed="${st.step === 2}" ${st.a1 && st.b1 && d1 != null ? '' : 'disabled style="opacity:.35"'}>Setup 2</button></div>
+    ${st.step === 1 ? `${rbox('a1', 'ROD A · a1')}${rbox('b1', 'ROD B · b1')}` : `${rbox('a2', 'ROD A · a2')}${rbox('b2', 'ROD B · b2')}`}
+    <div class="rescard">${st.step === 1 ? `<div class="result"><span class="lbl">TRUE a1−b1 </span>${d1 != null ? sgn(d1) : '—'}</div>`
+      : `<div class="result" style="font-size:16px"><span class="lbl">TRUE a1−b1 </span>${sgn(d1)}</div><div class="result" style="font-size:16px"><span class="lbl">APP. a2−b2 </span>${d2 != null ? sgn(d2) : '—'}</div><div class="result ${ev.ok && !ev.pass ? 'bad' : ''}"><span class="lbl">C </span>${ev.ok ? C.pegLabel(ev.per100) + '<span class="lbl"> ft/100 ft</span>' : '—'}</div>`}</div>
+    ${errs.map((e) => `<div class="msg err">✕ Reading ${esc(e)}</div>`).join('')}
+    ${st.step === 2 && ev.error && ev.error !== 'incomplete' ? `<div class="msg err">✕ ${esc(ev.error)}</div>` : ''}
+    ${st.step === 2 && ev.ok ? `<div class="msg ${ev.pass ? '' : 'warn'}" style="${ev.pass ? 'color:var(--pass)' : ''}">${ev.pass ? '✔ Within' : '⚠ Over'} ±${ev.tol} ft/100 ft</div>` : ''}
+    <div class="msg" style="font-weight:400;color:var(--muted)" ${st.step === 2 && ev.ok ? 'hidden' : ''}>${st.step === 1 ? 'Level midway between the pegs – equal sights cancel the error.' : 'Move the level near peg A. Read A, then the far rod on B.'}</div>`;
+  $$('#pstep button').forEach((b) => (b.onclick = () => { const n = Number(b.dataset.v); if (n === 2 && !(st.a1 && st.b1)) return; st.step = n; st.active = n === 1 ? 'a1' : 'a2'; drawPeg(job); }));
+  $$('.rbox', p).forEach((b) => (b.onclick = () => { st.active = b.dataset.f; drawPeg(job); }));
+  const complete = pegFields().every((k) => pnum(st[k]) != null && !errOf(k)) && (st.step === 1 || ev.ok);
+  $('#confirm').disabled = !complete; $('#confirm').textContent = st.step === 1 ? 'NEXT SETUP' : 'SAVE';
+  // Rod shows the active reading; while it is still empty, the other reading of this setup stays on the rod.
+  const shown = pnum(st[st.active]) != null ? st.active : pegFields().find((k) => pnum(st[k]) != null) || st.active;
+  const v = pnum(st[shown]); const bad = !!errOf(shown);
+  const center = v != null && !isNaN(v) ? v : rodView.cur ? rodView.cur.c : 5;
+  const wires = v != null && !isNaN(v) ? [{ v, main: true, active: shown === st.active, error: bad, impossible: bad, label: st[shown], sub: bad ? (v > L ? '> ROD' : '< 0') : null }] : [];
+  rodView.set({ center: Math.max(0.15, Math.min(L - 0.15, center)), ppf: 800, rodLength: L, wires, mean: null, dim: bad, three: false, instant: !rodView.cur });
+}
+function pegConfirm(job) {
+  const st = pegDraft; if ($('#confirm').disabled) return;
+  if (st.step === 1) { st.step = 2; st.active = 'a2'; toast('Setup 1 saved – move the level near peg A'); return drawPeg(job); }
+  const t = { ...pegDraftTest(), tol: db.prefs.pegTol || C.PEG_TOL_DEFAULT }; db.pegTests.push(t); save(); pegDraft = null;
+  go(`#/j/${job.id}/peg/${t.id}`);
+}
+function pegResultScreen(job, t) {
+  const root = app(); const p = pegEval(t); const latest = C.latestPeg(db.pegTests);
+  const users = db.jobs.flatMap((j) => j.surveys.filter((s) => s.peg?.test?.id === t.id).map((s) => `${j.name} – ${s.name}`));
+  const verdict = !p.ok ? ['na', 'INCOMPLETE', I.x] : p.pass ? ['pass', 'PASS', I.ok] : ['fail', 'ADJUST', I.x];
+  root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}/peg`, label: 'Peg tests' }, title: `Peg Test · ${R.usDate(t.date)}`, right: sysIcons() })}
+    <div class="scroll">
+      <div class="big ${verdict[0]}" role="status">${verdict[2]}<div><div class="bw">${verdict[1]}</div><div class="mono" style="font-size:20px;font-weight:800">C ${C.pegLabel(p.per100)} ft/100 ft</div><div>tolerance ±${p.tol} ft/100 ft${t.id === latest?.id ? ' · LATEST' : ''}</div></div></div>
+      ${t.sample ? '<div class="banner"><span><b>SAMPLE</b> peg test – shoot your own before applying it to real work.</span></div>' : ''}
+      <div class="section-label">Collimation error</div>
+      <div class="card kv">
+        <span class="k">C per 100 ft</span><span class="v">${C.pegLabel(p.per100)} ft</span>
+        <span class="k">C per foot</span><span class="v">${p.C == null ? '—' : (p.C >= 0 ? '+' : '−') + Math.abs(p.C).toFixed(6)}</span>
+        <span class="k">Angle</span><span class="v">${p.arcsec == null ? '—' : (p.arcsec >= 0 ? '+' : '−') + Math.abs(p.arcsec).toFixed(1) + '″'}</span>
+        <span class="k">Error, 100 ft sight</span><span class="v">${C.pegLabel(p.per100)} ft</span>
+        <span class="k">Error, 300 ft sight</span><span class="v">${p.C == null ? '—' : C.pegLabel(C.round(p.C * 300, 4))} ft</span>
+        <span class="k">Line of sight</span><span class="v" style="font-family:var(--sans)">${p.C > 0 ? 'inclined UP' : p.C < 0 ? 'inclined DOWN' : 'level'}</span>
+      </div>
+      <div class="section-label">Setup 1 · midway (${(p.dA1).toFixed(1)} / ${(p.dB1).toFixed(1)} ft)</div>
+      <div class="card kv"><span class="k">Rod A · a1</span><span class="v">${C.f3(t.a1)}</span><span class="k">Rod B · b1</span><span class="v">${C.f3(t.b1)}</span><span class="k">True diff a1 − b1</span><span class="v">${sgn(p.diff1)}</span></div>
+      <div class="section-label">Setup 2 · near A (${C.round(p.dA2, 1)} / ${C.round(p.dB2, 1)} ft)</div>
+      <div class="card kv"><span class="k">Rod A · a2</span><span class="v">${C.f3(t.a2)}</span><span class="k">Rod B · b2</span><span class="v">${C.f3(t.b2)}</span><span class="k">Apparent a2 − b2</span><span class="v">${sgn(p.diff2)}</span>
+        <span class="k">Rod B should read</span><span class="v">${C.f3(p.bShould)}</span></div>
+      <div class="msg" style="font-weight:400;color:var(--muted);margin:8px 4px;line-height:1.4">C = [(a2 − b2) − (a1 − b1)] ÷ (dA − dB). C &gt; 0: line of sight inclined up, readings too high. Corrected reading = reading − C × sight distance. Curvature &amp; refraction neglected.</div>
+      <div class="section-label">Details</div>
+      <div class="card kv" style="font-size:15px"><span class="k">Instrument</span><span class="v" style="font-family:var(--sans)">${esc(t.instrument || '—')}</span><span class="k">Observer</span><span class="v" style="font-family:var(--sans)">${esc(t.observer || '—')}</span><span class="k">Peg spacing</span><span class="v">${C.round(t.spacing, 1)} ft</span><span class="k">Shot on job</span><span class="v" style="font-family:var(--sans)">${esc(t.jobName || (t.sample ? 'Sample' : '—'))}</span><span class="k">Used by</span><span class="v" style="font-family:var(--sans)">${users.length ? users.length + ' survey' + (users.length > 1 ? 's' : '') : 'none yet'}</span></div>
+    </div>
+    <div class="pinned"><div class="row2"><button class="btn danger" id="pdel">DELETE</button><button class="btn primary" id="pdone">DONE ▶</button></div></div></div>`;
+  bindCommon(root);
+  $('#pdone').onclick = () => go(`#/j/${job.id}`);
+  $('#pdel').onclick = async () => {
+    if (!(await confirmDialog({ title: 'Delete peg test?', text: `Delete the ${R.usDate(t.date)} peg test? Surveys that used it keep their own copy.`, ok: 'Delete', danger: true }))) return;
+    db.pegTests = db.pegTests.filter((x) => x !== t); save(); go(`#/j/${job.id}/peg`); toast('Peg test deleted');
+  };
+}
+
 // ---------- settings ----------
 async function openSettings() {
   let persisted = null; try { persisted = await navigator.storage?.persisted?.(); } catch (e) {}
   const s = sheet('Settings', `
     <div class="section-label">Theme</div><div class="seg" id="thm"><button data-v="sunlight" aria-pressed="${db.prefs.theme !== 'dusk'}">☀ Sunlight</button><button data-v="dusk" aria-pressed="${db.prefs.theme === 'dusk'}">☾ Dusk</button></div>
+    <div class="section-label">Peg test</div>
+    <label class="field"><span>Collimation tolerance (ft per 100 ft)</span><div class="suffix" data-suffix="ft"><input class="input num" id="pegTol" inputmode="decimal" value="${db.prefs.pegTol}"></div></label>
+    <div class="msg" style="font-weight:400;color:var(--muted);margin:-8px 0 8px">Default ${C.PEG_TOL_DEFAULT} ft/100 ft (≈10″). A peg test outside this fails – adjust the level’s reticle.</div>
     <div class="section-label">Backup</div>
     <button class="listbtn" id="exp">⬇ Export backup (JSON)</button>
     <label class="listbtn" style="cursor:pointer">⬆ Import backup (JSON)<input type="file" id="imp" accept="application/json,.json" class="sr"></label>
@@ -1919,6 +2286,7 @@ async function openSettings() {
     <button class="listbtn" id="sample">＋ Add sample job again</button>
     <div class="section-label">About</div>
     <div class="msg" style="font-weight:400;color:var(--muted);line-height:1.5">Level Book v${R.APP_VERSION} · US survey decimal feet · works offline.<br>${isIOS && !isStandalone() ? 'Install: Safari → Share → Add to Home Screen.<br>' : ''}Data is stored only on this device. Safari can clear data for sites not added to the Home Screen after ~7 days unused – export backups regularly.<br>Storage: ${persisted ? 'persistent' : 'best-effort'} · ${isStandalone() ? 'installed app' : 'browser tab'}</div>`);
+  $('#pegTol', s.el).onchange = (e) => { const v = parseFloat(e.target.value); if (v > 0 && v < 1) { db.prefs.pegTol = v; save(); toast(`Peg tolerance ${v} ft/100 ft`); } else { e.target.value = db.prefs.pegTol; toast('Enter a value like 0.005'); } };
   $$('#thm button', s.el).forEach((b) => (b.onclick = () => { db.prefs.theme = b.dataset.v; save(); applyTheme(); $$('#thm button', s.el).forEach((x) => x.setAttribute('aria-pressed', x === b)); }));
   $('#exp', s.el).onclick = () => {
     const blob = new Blob([JSON.stringify({ app: 'levelbook', version: R.APP_VERSION, exported: new Date().toISOString(), data: db }, null, 1)], { type: 'application/json' });
@@ -1933,11 +2301,12 @@ async function openSettings() {
       const ok = await confirmDialog({ title: 'Import backup?', text: `Merge ${data.jobs.length} job(s) from ${f.name}. Jobs with the same ID are replaced.`, ok: 'Import' });
       if (!ok) return;
       data.jobs.forEach((nj) => { const i = db.jobs.findIndex((x) => x.id === nj.id); if (i >= 0) db.jobs[i] = nj; else db.jobs.push(nj); });
+      (data.pegTests || []).forEach((t) => { const i = db.pegTests.findIndex((x) => x.id === t.id); if (i >= 0) db.pegTests[i] = t; else db.pegTests.push(t); });
       save(); render(); toast(`Imported ${data.jobs.length} job(s)`);
     } catch (err) { toast('Import failed: ' + err.message); }
   };
   $('#persist', s.el).onclick = async () => { let r = false; try { r = await navigator.storage?.persist?.(); } catch (e) {} toast(r ? 'Storage marked persistent' : 'Browser declined – export backups regularly'); };
-  $('#sample', s.el).onclick = () => { db.jobs.push(...seedJobs()); save(); s.close(); go('#/'); };
+  $('#sample', s.el).onclick = () => { db.jobs.push(...seedJobs()); if (!db.pegTests.some((t) => t.sample)) db.pegTests.push(...seedPegTests()); save(); s.close(); go('#/'); };
 }
 
 // ---------- boot ----------
