@@ -1,4 +1,4 @@
-/* Level Book design system — Sunlight (default) and Dusk */
+/* BlueWorks Level Book design system — Sunlight (default) and Dusk */
 :root{
   --bg:#F7F7F2; --card:#FFFFFF; --text:#111111; --muted:#5F6368; --line:#D0D0C8; --alt:#EFEFEA; --field:#FFFFFF;
   --yellow:#FFC400; --on-yellow:#111111; --blue:#0B5FA5; --pass:#1E8E3E; --warn:#E37400; --err:#C5221F;
@@ -271,3 +271,5 @@ table.book.stake td:first-child{font-weight:700}
 .topbar .wordmark{flex:none;white-space:nowrap;font-size:18px;letter-spacing:.04em}
 @media (max-width:420px){.topbar .vertag{display:none}}
 @media (max-width:360px){.topbar .wordmark{font-size:16px;letter-spacing:.02em}}
+.topbar .wordmark{display:flex;flex-direction:column;line-height:1.02}
+.topbar .wordmark small{font-size:10px;letter-spacing:.24em;color:var(--blue);font-weight:800}
