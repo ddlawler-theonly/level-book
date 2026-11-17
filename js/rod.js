@@ -91,12 +91,20 @@ export class RodView {
       }
       tags.push({ y: wy, w });
     });
+    // stake-out target grade marker (dashed blue, clamped to the view when off the rod)
+    if (o.target && o.target.v != null && isFinite(o.target.v)) {
+      const tg = o.target; const ty = Math.max(20, Math.min(H - 20, y(tg.v))); const col = tg.error ? RED : BLUE;
+      parts.push(`<line x1="${x0 - 8}" x2="${x1 + 8}" y1="${ty}" y2="${ty}" stroke="#fff" stroke-width="6"/>`);
+      parts.push(`<line class="target${tg.error ? ' err' : ''}" x1="${x0 - 8}" x2="${x1 + 8}" y1="${ty}" y2="${ty}" stroke="${col}" stroke-width="3.5" stroke-dasharray="10 5"/>`);
+      parts.push(`<path d="M${x0 - 16} ${ty - 8} L${x0 - 4} ${ty} L${x0 - 16} ${ty + 8}Z" fill="${col}" stroke="#fff" stroke-width="1"/>`);
+      tags.push({ y: ty, w: { label: tg.label, sub: tg.sub, target: true, error: tg.error } });
+    }
     tags.sort((a, b) => a.y - b.y);
     for (let i = 1; i < tags.length; i++) if (tags[i].y - tags[i - 1].y < 38) tags[i].y = tags[i - 1].y + 38;
     tags.forEach(({ y: ty, w }) => {
       const tx = x1 + 18; const tw = Math.max(40, W - tx - 4);
-      const fill = w.error ? '#fff' : w.active ? YEL : '#fff'; const stroke = w.error ? RED : w.active ? YEL : '#9A9A92';
-      const color = w.error ? RED : '#111';
+      const fill = w.error ? '#fff' : w.target ? BLUE : w.active ? YEL : '#fff'; const stroke = w.error ? RED : w.target ? BLUE : w.active ? YEL : '#9A9A92';
+      const color = w.error ? RED : w.target ? '#fff' : '#111';
       const txt = (w.error ? '✕ ' : '') + w.label; const sub = w.error ? w.sub || '' : '';
       const fs = Math.min(w.main && !o.three ? 18 : 13, (tw - 6) / (Math.max(txt.length, sub.length) * 0.62));
       const h = sub ? 36 : 26;
