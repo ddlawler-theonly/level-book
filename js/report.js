@@ -1,8 +1,8 @@
 // Report builders: model -> plain text, CSV, PDF (jsPDF, vendored), HTML preview pages.
 import * as C from './calc.js';
-export const APP_VERSION = '1.1.0';
+export const APP_VERSION = '1.2.0';
 
-const TYPE = { loop: 'Level Loop', run: 'Level Run', site: 'Site Levels' };
+const TYPE = { loop: 'Level Loop', run: 'Level Run', site: 'Site Levels', stake: 'Stake Out' };
 export const usDate = (iso) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${m}/${d}/${y}`; };
 export const stamp = (d = new Date()) => {
   const date = d.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
@@ -14,16 +14,28 @@ const sgn = (v) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(3)
 
 export function surveyModel(job, s) {
   const comp = C.computeSurvey(s);
-  const isSite = s.type === 'site';
+  const isSite = s.type === 'site' || s.type === 'stake';
   const cl = isSite ? null : C.closure(s, comp);
   const closed = !!s.closed && (isSite || cl.closedOn);
   const adj = !isSite && closed && cl.closedOn ? C.adjust(s, s.adjustMethod || 'setups', comp, cl) : null;
   const std = C.STANDARDS.find((x) => x.id === s.standard) || C.STANDARDS[0];
   const pegT = s.peg?.test || null; const peg = pegT ? C.pegTest(pegT, pegT.tol || C.PEG_TOL_DEFAULT) : null;
-  return { job, s, comp, cl, closed, adj, std, isSite, three: s.method === 'three' && !isSite, pegOn: !!comp.peg, pegT, peg };
+  const stake = s.type === 'stake' ? C.stakeSurvey(s) : null;
+  return { job, s, comp, cl, closed, adj, std, isSite, three: s.method === 'three' && !isSite, pegOn: !!comp.peg, pegT, peg, stake };
+}
+// Stake sheet rows for PDF / preview / text.
+const STAKE_HEAD = ['STAKE', 'SETUP', 'HI', 'DESIGN', 'TARGET', 'ROD', 'GROUND', 'CUT/FILL'];
+const stakeBody = (m) => m.stake.rows.map((r) => [r.point, String(r.setup), C.f3(r.hi), C.f3(r.design), C.f3(r.target) + (r.out ? ' !' : ''), C.fmtReading(r.rod, r.text), C.f3(r.ground), C.cfShort(r)]);
+function stakeLines(m) {
+  const st = m.stake; const L = [];
+  st.setups.forEach((su) => L.push([`Setup ${su.n}`, `BS ${m.s.startBM.name} ${C.fmtReading(su.bs, su.text)}${su.corr != null ? ` (peg ${sgn(su.corr)})` : ''} -> HI ${C.f3(su.hi)}`]));
+  L.push(['Stakes', `${st.rows.length}: ${st.cuts} cut, ${st.fills} fill, ${st.onGrade} on grade${st.offRod ? `, ${st.offRod} target off rod` : ''}`]);
+  L.push(['Cut / fill', 'ground (HI - rod) minus design; C = cut (ground high), F = fill (ground low); 0.01 ft']);
+  return L;
 }
 
 // Peg-correction status line and the peg test record (for every report format).
+export const distStatus = (m) => (m.comp.distUsed ? 'used' : `not used${m.three ? ' (stadia recorded, not used)' : ''} – no distance checks; closure by setups`);
 export function pegStatus(m) {
   if (m.isSite) return null;
   if (m.pegOn) return `ON – C ${C.pegLabel(m.comp.peg.per100)} ft/100 ft (test ${usDate(m.pegT.date)}, ${m.pegT.instrument || '—'}); ${m.comp.peg.applied} readings corrected, ${m.comp.peg.skipped} without distance left as read`;
@@ -78,7 +90,7 @@ function checksLines(m) {
       L.push(['Known / computed elev', `${C.f3(cl.known)} / ${C.f3(cl.computed)}`]);
       L.push(['Misclosure', `${sgn(cl.misclosure)} ft`]);
       L.push(['Distance / setups', `${cl.feet} ft (${cl.miles.toFixed(3)} mi) / ${cl.setups}`]);
-      L.push(['Allowable', cl.allowable == null ? 'n/a (no distances)' : `${cl.allowable.toFixed(3)} ft  (${cl.k} ft√mi, ${m.std.id === 'custom' ? 'custom' : m.std.label})`]);
+      L.push(['Allowable', cl.allowable == null ? (cl.distOff ? 'n/a (distances not used)' : 'n/a (no distances)') : `${cl.allowable.toFixed(3)} ft  (${cl.k} ft√mi, ${m.std.id === 'custom' ? 'custom' : m.std.label})`]);
       L.push(['Result', cl.allowable == null ? 'NO DISTANCE' : cl.pass ? 'PASS' : 'FAIL']);
     }
   }
@@ -93,6 +105,7 @@ function headerLines(m) {
     ['Survey', `${s.name} (${TYPE[s.type]})`], ['Reading method', s.type === 'site' ? 'Single wire' : s.method === 'three' ? `Three-wire (K=${s.stadiaK}, tol ${s.spreadTol} ft)` : 'Single wire'],
     ['Observer / rod', `${s.observer || '—'} / ${s.rodPerson || '—'}`], ['Instrument', s.instrument || '—'], ['Units', 'US survey decimal feet'],
     ...(s.type === 'site' ? [] : [['Peg correction', pegStatus(m)]]),
+    ['Distances', distStatus(m)],
     ['Benchmarks', `Start ${s.startBM.name} ${C.f3(Number(s.startBM.elev))}` + (s.type === 'run' ? `; close ${s.closeBM.name} ${C.f3(Number(s.closeBM.elev))}` : s.type === 'loop' ? `; close on ${s.startBM.name}` : '')],
   ];
 }
@@ -110,6 +123,14 @@ export function textReport(job, surveys) {
     if (!m.closed) out.push('*** IN PROGRESS – NOT CLOSED ***');
     out.push(`Start ${s.startBM.name} ${C.f3(Number(s.startBM.elev))}`);
     if (!m.isSite) out.push(m.pegOn ? `Peg corr ON: C ${C.pegLabel(m.comp.peg.per100)} ft/100ft (test ${usDate(m.pegT.date)}, ${m.pegT.instrument || '—'}) · ${m.comp.peg.applied} corr, ${m.comp.peg.skipped} no dist` : `Peg corr OFF${m.pegT ? ` (test ${usDate(m.pegT.date)} on file)` : ''}`);
+    out.push(`Distances: ${m.comp.distUsed ? 'used' : 'not used'}`);
+    if (m.stake) {
+      m.stake.setups.forEach((su) => out.push(`Setup ${su.n}: BS ${s.startBM.name} ${C.fmtReading(su.bs, su.text)} → HI ${C.f3(su.hi)}`));
+      out.push(`${pad('STAKE', 9)}${pad('DESIGN', 9, true)}${pad('TGT', 7, true)}${pad('ROD', 7, true)}  C/F`);
+      m.stake.rows.forEach((r) => out.push(`${pad(r.point, 9)}${pad(C.f3(r.design), 9, true)}${pad(r.target.toFixed(2), 7, true)}${pad(C.fmtReading(r.rod, r.text), 7, true)}  ${C.cfShort(r)}${r.out ? ' (tgt off rod)' : ''}`));
+      out.push(`${m.stake.cuts} cut · ${m.stake.fills} fill · ${m.stake.onGrade} on grade`);
+      return;
+    }
     out.push(`ΣBS ${m.comp.sumBS.toFixed(3)}  ΣFS ${m.comp.sumFS.toFixed(3)}  Arith ${m.comp.arith.ok ? 'PASS ✔' : 'FAIL ✕'}`);
     if (m.cl && m.cl.closedOn) {
       out.push(`Closed on ${m.cl.bm.name}: misclose ${sgn(m.cl.misclosure)} ft`);
@@ -130,19 +151,23 @@ export function textReport(job, surveys) {
 
 const csvCell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 export function csvReport(job, surveys) {
-  const lines = [['Job', job.name], ['Project date', usDate(job.date)], ['Description', job.description || ''], ['Client/job #', job.client || ''], ['Units', 'US survey decimal ft'], ['Generated', stamp()], []];
+  const distLines = surveys.map((s) => [`Distances – ${s.name}`, s.useDist === false ? 'not used' : 'used']);
+  const lines = [['Job', job.name], ['Project date', usDate(job.date)], ['Description', job.description || ''], ['Client/job #', job.client || ''], ['Units', 'US survey decimal ft'], ['Generated', stamp()], ...distLines, []];
   lines.push(['Survey', 'Type', 'Method', 'Seq', 'Setup', 'Reading', 'Point', 'Value', 'Top', 'Mid', 'Bot', 'Dist ft', 'Peg corr', 'Corrected', 'HI', 'Elev', 'Adj Elev', 'Check', 'Notes', 'Status']);
   const pegRows = [];
+  const stakeOut = [];
   surveys.forEach((s) => {
+    if (s.type === 'stake') { const st = C.stakeSurvey(s); st.rows.forEach((r, i) => stakeOut.push([s.name, i + 1, r.setup, r.point, C.f3(r.hi), C.f3(r.design), C.f3(r.target), C.fmtReading(r.rod, r.text), r.dist == null ? '' : st.distUsed ? r.dist : `${r.dist} (not used)`, r.corr != null ? r.corr.toFixed(3) : '', C.f3(r.ground), r.kind || '', r.cf == null ? '' : Math.abs(r.cf).toFixed(2), r.out ? `target off rod (${r.out})` : ''])); return; }
     const m = surveyModel(job, s); const adjBy = {}; (m.adj || []).forEach((p) => { if (p.readingIdx >= 0) adjBy[p.readingIdx] = p.adjusted; });
     if (m.pegT) pegRows.push([s.name, m.pegOn ? 'Peg correction ON' : 'Peg correction OFF'], ...pegLines(m.pegT, m.peg).map(([k, v]) => [s.name, k, v]));
     s.readings.forEach((r, i) => {
       const inf = m.comp.info[i]; const v = inf.raw; const d = inf.d;
       const tw = r.wires ? C.threeWire(r.wires, s.stadiaK, s.spreadTol) : null;
-      lines.push([s.name, TYPE[s.type], m.three ? '3-wire' : 'single', i + 1, inf.setup, r.type, r.point, C.fmtReading(v, r.wires ? null : r.text), r.wires ? r.wires.t.toFixed(3) : '', r.wires ? r.wires.m.toFixed(3) : '', r.wires ? r.wires.b.toFixed(3) : '', d ?? '',
+      lines.push([s.name, TYPE[s.type], m.three ? '3-wire' : 'single', i + 1, inf.setup, r.type, r.point, C.fmtReading(v, r.wires ? null : r.text), r.wires ? r.wires.t.toFixed(3) : '', r.wires ? r.wires.m.toFixed(3) : '', r.wires ? r.wires.b.toFixed(3) : '', inf.dRec == null ? '' : m.comp.distUsed ? inf.dRec : `${inf.dRec} (not used)`,
         inf.corr != null ? inf.corr.toFixed(3) : m.pegOn && inf.noDist ? 'no dist' : '', m.pegOn ? inf.v.toFixed(3) : '', r.type === 'BS' ? C.f3(inf.hi) : '', inf.elev == null ? '' : C.f3(inf.elev), adjBy[i] != null ? C.f3(adjBy[i]) : '', tw ? (tw.orderOk && tw.spreadOk ? 'PASS' : 'FAIL') + ` d${tw.spreadDiff.toFixed(3)}` : '', (m.comp.warnings[i] || []).join('; '), m.closed ? 'CLOSED' : 'IN PROGRESS'],);
     });
   });
+  if (stakeOut.length) lines.push([], ['Survey', 'Stake #', 'Setup', 'Point', 'HI', 'Design', 'Target rod', 'Actual rod', 'Dist ft', 'Peg corr', 'Ground', 'Cut/Fill', 'Amount ft', 'Notes'], ...stakeOut);
   if (pegRows.length) lines.push([], ['Survey', 'Peg test', 'Value'], ...pegRows);
   return lines.map((l) => l.map(csvCell).join(',')).join('\r\n');
 }
@@ -164,7 +189,15 @@ export function pdfReport(job, surveys, inc) {
     doc.setFontSize(9);
     headerLines(m).forEach(([k, v]) => { doc.setFont('helvetica', 'bold'); doc.text(winAnsi(k), M, y); doc.setFont('helvetica', 'normal'); doc.text(winAnsi(v), M + 95, y, { maxWidth: W - 2 * M - 95 }); y += 12; });
     y += 4;
-    if (inc.table) {
+    if (m.stake) {
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text('STAKE SHEET', M, y + 6); y += 10;
+      const body = stakeBody(m);
+      doc.autoTable({ startY: y, head: [STAKE_HEAD], body: body.map((r) => r.map(winAnsi)), margin: { left: M, right: M, bottom: 50 }, theme: 'plain',
+        styles: { font: 'courier', fontSize: 8.5, cellPadding: 3, halign: 'right', textColor: 20 }, headStyles: { font: 'helvetica', fontStyle: 'bold', fillColor: [228, 228, 222], halign: 'right' },
+        alternateRowStyles: { fillColor: [239, 239, 234] }, columnStyles: { 0: { halign: 'left', font: 'helvetica', fontStyle: 'bold' } },
+        didParseCell: (d) => { if (d.section === 'head' && d.column.index === 0) d.cell.styles.halign = 'left'; if (d.section === 'body' && d.column.index === 7) { const t = String(d.cell.raw); d.cell.styles.fontStyle = 'bold'; d.cell.styles.textColor = t.startsWith('C') ? [197, 34, 31] : t.startsWith('F') ? [11, 95, 165] : [30, 142, 62]; } } });
+      y = doc.lastAutoTable.finalY + 16;
+    } else if (inc.table) {
       const rows = tableRows(m, inc);
       const head = ['STA', 'BS', 'HI', 'FS', 'ELEV', 'DIST'];
       if (m.pegOn) head.push('PEG CORR');
@@ -191,9 +224,10 @@ export function pdfReport(job, surveys, inc) {
         didParseCell: (d) => { const t = String(d.cell.raw || ''); if (d.column.index === 1 && /\bFAIL\b|NOT CLOSED/.test(t)) d.cell.styles.textColor = [197, 34, 31]; else if (d.column.index === 1 && /\bPASS\b/.test(t)) d.cell.styles.textColor = [30, 142, 62]; } });
       y = doc.lastAutoTable.finalY + 14;
     };
-    if (inc.checks) { const c = checksLines(m); block('CHECKS & CLOSURE', c.lines); if (c.warns.length && inc.notes) block('WARNINGS', c.warns.map((w) => ['!', w])); }
+    if (m.stake) block('SETUPS & SUMMARY', stakeLines(m));
+    else if (inc.checks) { const c = checksLines(m); block('CHECKS & CLOSURE', c.lines); if (c.warns.length && inc.notes) block('WARNINGS', c.warns.map((w) => ['!', w])); }
     if (m.pegT && inc.peg !== false) block(`PEG TEST RECORD (${m.pegOn ? 'applied' : 'not applied'})`, pegLines(m.pegT, m.peg));
-    if (inc.adjusted) {
+    if (inc.adjusted && !m.stake) {
       if (m.adj) block(`FINAL ELEVATIONS (adjusted by ${s.adjustMethod === 'distance' ? 'distance' : 'setups'})`, [['Point', 'Measured / Corr / ADJUSTED'], ...m.adj.map((p) => [p.point + (p.side ? ' (IFS)' : ''), `${C.f3(p.elev)}  ${sgn(p.correction)}  ${C.f3(p.adjusted)}`])]);
       else block('ELEVATIONS (unadjusted – not closed)', m.comp.pointElev.map((p) => [p.point + (p.side ? ' (IFS)' : ''), C.f3(p.elev)]));
     }
@@ -217,7 +251,10 @@ export function previewPages(job, surveys, inc) {
     const m = surveyModel(job, s);
     push(`<h3>LEVEL BOOK – ${e(job.name)}</h3><div style="height:2px;background:#FFC400;margin:2px 0 4px"></div>${m.closed ? '' : '<div class="inprog">IN PROGRESS – NOT CLOSED</div>'}`, 3);
     push(`<table class="kvt">${headerLines(m).map(([k, v]) => `<tr><td style="text-align:left;font-family:Helvetica;font-weight:700;width:28%;background:none">${e(k)}</td><td style="text-align:left;background:none">${e(v)}</td></tr>`).join('')}</table>`, 11);
-    if (inc.table) {
+    if (m.stake) {
+      const col = (t) => (t.startsWith('C') ? '#C5221F' : t.startsWith('F') ? '#0B5FA5' : '#1E8E3E');
+      push(`<h4>STAKE SHEET</h4><table><tr>${STAKE_HEAD.map((h) => `<th>${h}</th>`).join('')}</tr>${stakeBody(m).map((r) => `<tr>${r.map((x, i) => `<td style="${i === 0 ? 'font-weight:700' : ''}${i === 7 ? `font-weight:800;color:${col(x)}` : ''}">${e(x)}</td>`).join('')}</tr>`).join('')}</table>`, m.stake.rows.length + 3);
+    } else if (inc.table) {
       const rows = tableRows(m, inc);
       const head = ['STA', 'BS', 'HI', 'FS', 'ELEV', 'DIST']; if (m.pegOn) head.push('PEG'); if (m.three && inc.threewire) head.push('BS T/M/B', 'FS T/M/B', 'CHECK'); if (inc.notes) head.push('NOTES');
       const th = `<tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>`;
@@ -232,9 +269,10 @@ export function previewPages(job, surveys, inc) {
       if (m.pegOn) push('<div style="font-style:italic;font-size:7px;color:#444">BS/FS as booked; HI and ELEV use peg-corrected readings (reading − C × dist). n/d = no distance.</div>', 1);
     }
     const block = (t, L) => push(`<h4>${e(t)}</h4><table>${L.map(([k, v]) => `<tr><td style="text-align:left;font-family:Helvetica;font-weight:700;width:38%">${e(k)}</td><td style="text-align:left;${/\bFAIL\b|NOT CLOSED/.test(v) ? 'color:#C5221F;font-weight:700' : /\bPASS\b/.test(v) ? 'color:#1E8E3E;font-weight:700' : ''}">${e(v)}</td></tr>`).join('')}</table>`, L.length + 2);
-    if (inc.checks) { const c = checksLines(m); block('CHECKS & CLOSURE', c.lines); if (c.warns.length && inc.notes) block('WARNINGS', c.warns.map((w) => ['⚠', w])); }
+    if (m.stake) block('SETUPS & SUMMARY', stakeLines(m));
+    else if (inc.checks) { const c = checksLines(m); block('CHECKS & CLOSURE', c.lines); if (c.warns.length && inc.notes) block('WARNINGS', c.warns.map((w) => ['⚠', w])); }
     if (m.pegT && inc.peg !== false) block(`PEG TEST RECORD (${m.pegOn ? 'applied' : 'not applied'})`, pegLines(m.pegT, m.peg));
-    if (inc.adjusted) {
+    if (inc.adjusted && !m.stake) {
       if (m.adj) block(`FINAL ELEVATIONS (adjusted by ${s.adjustMethod === 'distance' ? 'distance' : 'setups'})`, [['Point', 'Measured / Corr / ADJUSTED'], ...m.adj.map((p) => [p.point + (p.side ? ' (IFS)' : ''), `${C.f3(p.elev)}  ${sgn(p.correction)}  ${C.f3(p.adjusted)}`])]);
       else block('ELEVATIONS (unadjusted – not closed)', m.comp.pointElev.map((p) => [p.point + (p.side ? ' (IFS)' : ''), C.f3(p.elev)]));
     }

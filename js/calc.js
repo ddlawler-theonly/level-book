@@ -99,6 +99,11 @@ export function corrected(raw, d, peg) {
   return { v, corr: round(v - raw, 3), noDist: false };
 }
 
+// Per-survey "Use distance" switch (default ON). OFF = sight distances are ignored for the WHOLE survey:
+// no peg correction, no balance / long-sight checks, no distance-based closure allowable or adjustment.
+// Three-wire stadia distances are still computed and shown, just not used.
+export const usesDist = (s) => s.useDist !== false;
+
 export const isBMName = (name, s) => {
   if (!name) return false;
   const n = name.trim().toUpperCase();
@@ -125,7 +130,8 @@ export function computeSurvey(s) {
   rows.push(curRow = { sta: point, kind: 'BM', bs: null, hi: null, fs: null, elev, setup: 1, bsIdx: null, fsIdx: null, start: true });
   readings.forEach((r, i) => {
     const raw = valueOf(r, s);
-    const d = distOf(r, s);
+    const dRec = distOf(r, s);              // recorded / stadia distance (always kept)
+    const d = usesDist(s) ? dRec : null;    // distance used in calculations
     const pc = corrected(raw, d, peg); const v = pc.v;
     if (peg) { if (pc.noDist) pegSkipped++; else pegApplied++; }
     const rawText = r.wires ? null : r.text; const text = pc.corr != null ? null : rawText;
@@ -139,23 +145,23 @@ export function computeSurvey(s) {
     if (r.note) addW(i, r.note);
     if (r.type === 'BS') {
       hi = round(elev + v, 3);
-      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, hi, elev: null, setup: setups.length + 1 };
+      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, dRec, hi, elev: null, setup: setups.length + 1 };
       sumBS += v; if (d) { totBSd += d; cumDist += d; }
       setups.push({ n: setups.length + 1, bsIdx: i, fsIdx: null, bsDist: d, fsDist: null, hi, ifs: [], from: point, to: null });
       if (curRow && curRow.sta === point && curRow.bs == null && !curRow.ifs) {
-        Object.assign(curRow, { bs: v, hi, bsIdx: i, bsText: text, bsWires: r.wires || null, bsDist: d, setup: setups.length, ...pg('bs') });
+        Object.assign(curRow, { bs: v, hi, bsIdx: i, bsText: text, bsWires: r.wires || null, bsDist: dRec, setup: setups.length, ...pg('bs') });
       } else {
-        rows.push(curRow = { sta: point, kind: isBMName(point, s) ? 'BM' : 'TP', bs: v, hi, fs: null, elev, setup: setups.length, bsIdx: i, bsText: text, bsWires: r.wires || null, bsDist: d, ...pg('bs') });
+        rows.push(curRow = { sta: point, kind: isBMName(point, s) ? 'BM' : 'TP', bs: v, hi, fs: null, elev, setup: setups.length, bsIdx: i, bsText: text, bsWires: r.wires || null, bsDist: dRec, ...pg('bs') });
       }
       expect = 'FS';
     } else if (r.type === 'FS') {
       const su = setups[setups.length - 1];
       const e = round(hi - v, 3);
-      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, hi: null, elev: e, setup: setups.length };
+      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, dRec, hi: null, elev: e, setup: setups.length };
       sumFS += v; if (d) { totFSd += d; cumDist += d; }
       if (su) { su.fsIdx = i; su.fsDist = d; su.to = r.point; }
       elev = e; point = r.point;
-      rows.push(curRow = { sta: r.point, kind: isBMName(r.point, s) ? 'BM' : 'TP', bs: null, hi: null, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: text, fsWires: r.wires || null, fsDist: d, ...pg('fs') });
+      rows.push(curRow = { sta: r.point, kind: isBMName(r.point, s) ? 'BM' : 'TP', bs: null, hi: null, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: text, fsWires: r.wires || null, fsDist: dRec, ...pg('fs') });
       pointElev.push({ point: r.point, elev: e, cumDist, setup: setups.length, readingIdx: i, kind: curRow.kind });
       if (su && su.bsDist != null && su.fsDist != null && s.imbalanceLimit && Math.abs(su.bsDist - su.fsDist) > s.imbalanceLimit)
         addW(i, `Setup ${su.n} imbalance ${round(Math.abs(su.bsDist - su.fsDist), 1)} ft`);
@@ -163,9 +169,9 @@ export function computeSurvey(s) {
     } else if (r.type === 'IFS') {
       const su = setups[setups.length - 1];
       const e = round(hi - v, 3);
-      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, hi: null, elev: e, setup: setups.length };
+      info[i] = { raw, v, corr: pc.corr, noDist: pc.noDist, d, dRec, hi: null, elev: e, setup: setups.length };
       if (su) su.ifs.push(i);
-      rows.push({ sta: r.point, kind: 'IFS', ifs: true, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: text, fsWires: r.wires || null, fsDist: d, cumDist, ...pg('fs') });
+      rows.push({ sta: r.point, kind: 'IFS', ifs: true, fs: v, elev: e, setup: setups.length, fsIdx: i, fsText: text, fsWires: r.wires || null, fsDist: dRec, cumDist, ...pg('fs') });
       pointElev.push({ point: r.point, elev: e, cumDist: cumDist + 0, setup: setups.length, readingIdx: i, kind: 'IFS', side: true });
     }
   });
@@ -178,7 +184,7 @@ export function computeSurvey(s) {
   // Running BS/FS balance over completed setups (both sights measured).
   const imbalance = round(setups.filter((su) => su.bsDist != null && su.fsDist != null).reduce((a, su) => a + su.bsDist - su.fsDist, 0), 1);
   return {
-    rows, setups, warnings, pointElev, info,
+    rows, setups, warnings, pointElev, info, distUsed: usesDist(s),
     peg: peg ? { ...peg, applied: pegApplied, skipped: pegSkipped } : null,
     sumBS: round(sumBS, 3), sumFS: round(sumFS, 3),
     arith: { diff, delta, ok: delta != null && Math.abs(diff - delta) < 0.0005, against: expect === 'FS' ? 'HI' : 'elev' },
@@ -205,13 +211,14 @@ export function closure(s, comp = computeSurvey(s)) {
   const k = standardK(s);
   const allow = comp.totalDist > 0 ? allowable(k, miles) : null;
   const pass = allow != null && Math.abs(misclosure) <= allow + 1e-9;
-  return { bm, closedOn: !!closedOn, known, computed, misclosure, miles, feet: comp.totalDist, setups: comp.setups.length, k, allowable: allow, pass, noDistance: !(comp.totalDist > 0) };
+  return { bm, closedOn: !!closedOn, known, computed, misclosure, miles, feet: comp.totalDist, setups: comp.setups.length, k, allowable: allow, pass, noDistance: !(comp.totalDist > 0), distOff: !usesDist(s) };
 }
 
 // Proportional adjustment. Correction = −misclosure distributed by setup count or by cumulative distance.
 // Turning points / BMs: setup i of n -> i/n; distance -> cumDist/total. Side shots take the correction
 // of the setup's height of instrument (setup i -> i/n; distance -> cumulative distance through that setup's BS).
 export function adjust(s, method = 'setups', comp = computeSurvey(s), cl = closure(s, comp)) {
+  if (!usesDist(s)) method = 'setups'; // distance-based adjustment needs distances
   const corr = -cl.misclosure;
   const n = comp.setups.length || 1;
   const total = comp.totalDist || 0;
@@ -229,8 +236,41 @@ export function adjust(s, method = 'setups', comp = computeSurvey(s), cl = closu
 
 export function surveyStatus(s) {
   if (!s.readings?.length) return 'open';
-  if (s.type === 'site') return s.closed ? 'closed' : 'open';
+  if (s.type === 'site' || s.type === 'stake') return s.closed ? 'closed' : 'open';
   if (!s.closed) return 'open';
   const cl = closure(s);
   return cl.pass ? 'closed' : 'check';
 }
+
+// ---------- Stake out (DRAFT) ----------
+// HI from a backsight on a known BM. Target rod reading for a design grade = HI − design.
+// Actual shot → ground = HI − rod. Cut/fill = ground − design: + → CUT (ground high), − → FILL (ground low).
+export function stakeCalc(hi, design, rod, rodLength = 16) {
+  const out = { target: null, ground: null, cf: null, kind: null, out: null };
+  if (hi == null || !isFinite(hi) || design == null || !isFinite(design)) return out;
+  out.target = round(hi - design, 3);
+  if (out.target < 0) out.out = 'above'; else if (out.target > rodLength) out.out = 'below';
+  if (rod != null && isFinite(rod)) {
+    out.ground = round(hi - rod, 3); out.cf = round(out.ground - design, 3);
+    out.kind = Math.abs(out.cf) < 0.005 ? 'ON GRADE' : out.cf > 0 ? 'CUT' : 'FILL';
+  }
+  return out;
+}
+
+// Whole stake-out survey: HI per setup (each setup backsights the start BM) and every stake's cut/fill.
+export function stakeSurvey(s) {
+  const peg = pegFor(s); const useD = usesDist(s); const L = s.rodLength || 16;
+  const bm = Number(s.startBM?.elev);
+  const setups = (s.readings || []).filter((r) => r.type === 'BS').map((r, i) => {
+    const pc = corrected(r.value, useD ? r.dist ?? null : null, peg);
+    return { n: i + 1, bs: r.value, text: r.text, dist: r.dist ?? null, corr: pc.corr, hi: round(bm + pc.v, 3) };
+  });
+  const rows = (s.stakes || []).map((k) => {
+    const su = setups[k.setup] || setups[setups.length - 1]; const hi = su ? su.hi : null;
+    const pc = corrected(k.value, useD ? k.dist ?? null : null, peg);
+    return { ...stakeCalc(hi, k.design, pc.v, L), point: k.point, design: k.design, rod: k.value, text: k.text, dist: k.dist ?? null, corr: pc.corr, setup: (k.setup ?? setups.length - 1) + 1, hi };
+  });
+  const n = (kind) => rows.filter((r) => r.kind === kind).length;
+  return { setups, rows, cuts: n('CUT'), fills: n('FILL'), onGrade: n('ON GRADE'), offRod: rows.filter((r) => r.out).length, distUsed: useD, peg };
+}
+export const cfShort = (r) => (r.kind == null ? '' : r.kind === 'ON GRADE' ? 'ON GR' : `${r.kind === 'CUT' ? 'C' : 'F'} ${Math.abs(r.cf).toFixed(2)}`);

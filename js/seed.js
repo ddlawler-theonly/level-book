@@ -33,7 +33,7 @@ export function seedJobs() {
   };
   const now = Date.now();
   return [
-    { id: uid(), name: 'Pearland Tellepson', date: '2026-11-16', description: 'Pad grades, north lot BMs', client: 'SAMPLE DATA', archived: false, created: now, updated: now, surveys: [loop, run] },
+    { id: uid(), name: 'Pearland Tellepson', date: '2026-11-16', description: 'Pad grades, north lot BMs', client: 'SAMPLE DATA', archived: false, created: now, updated: now, surveys: [loop, run, seedStake()] },
   ];
 }
 
@@ -42,4 +42,17 @@ export function seedJobs() {
 export function seedPegTests() {
   return [{ id: uid(), date: '2026-11-12', instrument: 'Auto level AT-B4', observer: 'D. Lawler', note: 'SAMPLE – shoot your own before relying on it',
     spacing: 200, dA2: 10, dB2: 210, a1: 5.284, b1: 4.912, a2: 4.618, b2: 4.250, rodLength: 16, sample: true, created: Date.parse('2026-11-12T08:00:00-06:00') }];
+}
+
+// Sample stake out: BS 5.31 on BM-1 (102.45) → HI 107.760. Target = HI − design; cut/fill = (HI − rod) − design.
+export function seedStake() {
+  const t = Date.parse('2026-11-16T10:00:00-06:00');
+  return { ...surveyDefaults('stake'), name: 'Stake 1 – pad corners (SAMPLE)', observer: 'D. Lawler', rodPerson: 'J. Ortiz', instrument: 'Auto level AT-B4',
+    startBM: { name: 'BM-1', elev: 102.45 }, sample: true, closed: true, created: t, updated: t,
+    readings: [{ id: uid(), type: 'BS', point: 'BM-1', value: 5.31, text: '5.31', dist: 150 }],
+    stakes: [
+      { id: uid(), point: 'PAD-NE', design: 103.25, value: 4.72, text: '4.72', dist: 85, setup: 0 },  // FILL 0.21
+      { id: uid(), point: 'PAD-NW', design: 103.0, value: 4.10, text: '4.10', dist: 120, setup: 0 },  // CUT 0.66
+      { id: uid(), point: 'PAD-SW', design: 102.9, value: 4.86, text: '4.86', dist: 140, setup: 0 },  // ON GRADE
+    ] };
 }

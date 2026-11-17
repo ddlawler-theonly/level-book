@@ -1,5 +1,5 @@
 import * as C from './calc.js';
-import { seedJobs, seedPegTests, surveyDefaults, uid } from './seed.js';
+import { seedJobs, seedPegTests, seedStake, surveyDefaults, uid } from './seed.js';
 import { RodView } from './rod.js';
 import * as R from './report.js';
 
@@ -15,6 +15,9 @@ function load() {
   db.prefs = db.prefs || { theme: 'sunlight', includes: {} }; db.prefs.includes = db.prefs.includes || {};
   if (!Array.isArray(db.pegTests)) { db.pegTests = seedPegTests(); save(); } // v1.1.0: peg tests live at app level (all jobs)
   if (!(db.prefs.pegTol > 0)) db.prefs.pegTol = C.PEG_TOL_DEFAULT;
+  if (typeof db.prefs.useDist !== 'boolean') db.prefs.useDist = true;
+  // v1.2.0: add the sample Stake Out to the sample Pearland job once
+  if (!db.prefs.stakeSeeded) { const sj = db.jobs.find((j) => j.client === 'SAMPLE DATA' && j.surveys.some((x) => x.sample)); if (sj && !sj.surveys.some((x) => x.type === 'stake')) sj.surveys.push(seedStake()); db.prefs.stakeSeeded = true; save(); }
 }
 function save() { try { const json = JSON.stringify(db); localStorage.setItem(KEY, json); localStorage.setItem('lb.theme', db.prefs.theme); N()?.backup(json); } catch (e) { toast('Could not save – storage full?'); } }
 const touch = (job, s) => { const t = Date.now(); job.updated = t; if (s) s.updated = t; save(); };
@@ -30,11 +33,12 @@ const go = (h) => { if (location.hash === h) render(); else location.hash = h; }
 const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = () => window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true;
-const TYPE = { loop: 'Level Loop', run: 'Level Run', site: 'Site Levels' };
-const SHORT = { loop: 'Loop', run: 'Run', site: 'Site levels' };
+const TYPE = { loop: 'Level Loop', run: 'Level Run', site: 'Site Levels', stake: 'Stake Out' };
+const SHORT = { loop: 'Loop', run: 'Run', site: 'Site levels', stake: 'Stake' };
 const sgn = (v) => (v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(3));
 
 const I = {
+  chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/><circle cx="12" cy="12" r="7"/></svg>',
   theme: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>',
   share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3M7 8l5-5 5 5"/><path d="M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-7"/></svg>',
@@ -44,15 +48,101 @@ const I = {
   site: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="20" cy="20" r="12"/><path d="M20 4v8M20 28v8M4 20h8M28 20h8"/><circle cx="20" cy="20" r="2" fill="currentColor"/></svg>',
   ok: '<svg viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 25l9 9 19-20"/></svg>',
   x: '<svg viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"><path d="M13 13l22 22M35 13L13 35"/></svg>',
+  stake: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 34h32"/><path d="M20 36V10"/><path d="M20 10l10 4-10 4"/><path d="M8 26h24" stroke-dasharray="3 3"/></svg>',
   peg: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 34h34"/><path d="M8 34V14M32 34V10"/><path d="M6 14h4M6 19h4M6 24h4M30 10h4M30 15h4M30 20h4"/><path d="M14 22l4-6 4 6M18 16v-3"/><path d="M13 13h21" stroke-dasharray="2 3"/></svg>',
   level: '<svg viewBox="0 0 96 96" width="96" height="96" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><rect x="62" y="10" width="14" height="76" rx="2"/><path d="M62 22h7M62 34h7M62 46h7M62 58h7M62 70h7"/><path d="M16 40h30l-4 10H20z"/><path d="M31 50v12M22 86l9-24 9 24"/><path d="M46 44h12" stroke-dasharray="3 4"/></svg>',
 };
-const topbar = ({ back, title, right = '', wordmark }) => `<header class="topbar">${back ? `<button class="back" data-back="${esc(back.href)}">‹ ${esc(back.label)}</button>` : ''}${wordmark ? '<span class="wordmark">LEVEL BOOK</span><span class="spacer"></span>' : `<span class="title">${esc(title || '')}</span>`}${right}</header>`;
-const sysIcons = () => `<button class="iconbtn" data-act="theme" aria-label="Toggle Sunlight/Dusk theme">${I.theme}</button><button class="iconbtn" data-act="settings" aria-label="Settings">${I.gear}</button>`;
+const topbar = ({ back, title, right = '', wordmark }) => `<header class="topbar">${back ? `<button class="back" data-back="${esc(back.href)}">‹ ${esc(back.label)}</button>` : ''}${wordmark ? `<span class="wordmark">LEVEL BOOK</span><span class="trialtag" title="Field trial build">TRIAL</span><span class="vertag">v${R.APP_VERSION}</span><span class="spacer"></span>` : `<span class="title">${esc(title || '')}</span>`}${right}</header>`;
+const sysIcons = () => `<button class="iconbtn" data-act="feedback" aria-label="Send feedback">${I.chat}</button><button class="iconbtn" data-act="theme" aria-label="Toggle Sunlight/Dusk theme">${I.theme}</button><button class="iconbtn" data-act="settings" aria-label="Settings">${I.gear}</button>`;
 function bindCommon(root) {
   $$('[data-back]', root).forEach((b) => (b.onclick = () => go(b.dataset.back)));
   $$('[data-act="theme"]', root).forEach((b) => (b.onclick = toggleTheme));
   $$('[data-act="settings"]', root).forEach((b) => (b.onclick = openSettings));
+  $$('[data-act="feedback"]', root).forEach((b) => (b.onclick = () => openFeedback()));
+}
+
+// ---------- field trial: welcome + feedback ----------
+const FEEDBACK_TO = 'ddlawler@hotmail.com';
+function welcomeCard() {
+  const o = overlay(`<div class="dialog welcome" role="dialog" aria-label="Welcome to the Level Book field trial">
+    <div class="wl-h"><span class="trialtag">TRIAL</span><h2>Welcome to Level Book</h2></div>
+    <p>Thanks for field-testing <b>Level Book v${R.APP_VERSION}</b> – a digital level book for loops, runs, site levels, stake out and peg tests.</p>
+    <ul class="wl">
+      <li><b>Your data stays on your phone.</b> Nothing is uploaded; there is no account.</li>
+      <li><b>Send feedback</b> any time with the ${I.chat.replace('<svg', '<svg width="18" height="18" style="vertical-align:-4px"')} button at the top, or in Settings.</li>
+      <li><b>Back up</b> with Settings → Export backup, especially before deleting the app.</li>
+      <li>A <b>sample job</b> (Pearland) is loaded so you can look around.</li>
+    </ul>
+    <button class="btn primary block" id="wlGo">GET STARTED</button></div>`, { dialog: true, onClose: () => { db.prefs.welcomed = true; save(); } });
+  $('#wlGo', o.el).onclick = () => o.close();
+  return o;
+}
+function screenName() {
+  const h = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+  if (!h.length) return 'Jobs';
+  if (h[0] !== 'j') return h.join('/');
+  if (!h[2]) return 'Main menu';
+  if (h[2] === 'peg') return 'Peg test' + (h[3] ? ' · ' + (h[3] === 'new' ? 'setup' : h[3] === 'entry' ? 'entry' : 'result') : 's');
+  if (h[2] === 's') { const v = (h[4] || 'book').split('?')[0]; return ({ entry: 'Entry', book: 'Book', close: 'Closure', share: 'Share' })[v] || v; }
+  return h[2];
+}
+function feedbackContext() {
+  const h = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+  const job = h[0] === 'j' ? getJob(h[1]) : null; let s = null;
+  if (job && h[2] === 's') s = getSurvey(job, h[3]);
+  else if (job) s = [...job.surveys].sort((a, b) => b.updated - a.updated)[0] || null;
+  return { job, s };
+}
+function feedbackText(f, ctx) {
+  const lines = [
+    `Level Book feedback v${R.APP_VERSION}`, `To: ${FEEDBACK_TO}`, '',
+    `Rating: ${f.rating ? '★'.repeat(f.rating) + '☆'.repeat(5 - f.rating) + ` (${f.rating}/5)` : 'not given'}`,
+    `Category: ${f.cat}`, '', 'Notes:', f.notes.trim() || '(none)', '',
+    '— device info —',
+    `App version: ${R.APP_VERSION}${isStandalone() ? ' (installed)' : ' (browser)'}`,
+    `Device/UA: ${navigator.userAgent}`,
+    `Screen: ${screen.width}×${screen.height} @${window.devicePixelRatio || 1}x · viewport ${innerWidth}×${innerHeight}`,
+    `Theme: ${db.prefs.theme === 'dusk' ? 'Dusk' : 'Sunlight'}`,
+    `Current screen: ${screenName()}${ctx.job ? ' · ' + ctx.job.name : ''}${ctx.s ? ' · ' + ctx.s.name : ''}`,
+  ];
+  if (f.attach && ctx.s) lines.push(`Attached report: ${R.fileBase(ctx.job, ctx.s)}.pdf`);
+  return lines.join('\n');
+}
+function feedbackMailto(f, ctx, note) {
+  const body = feedbackText(f, ctx).split('\n').filter((l) => !l.startsWith('To: ')).join('\n') + (note ? '\n\n' + note : '');
+  return `mailto:${FEEDBACK_TO}?subject=${encodeURIComponent('Level Book feedback v' + R.APP_VERSION)}&body=${encodeURIComponent(body)}`;
+}
+function openFeedback() {
+  const ctx = feedbackContext(); const f = { rating: 0, cat: 'bug', notes: '', attach: false };
+  const cats = [['bug', 'Bug'], ['idea', 'Idea'], ['looks', 'Looks'], ['math', 'Math']];
+  const s = sheet('Send feedback', `
+    <div class="section-label">How is it working?</div>
+    <div class="stars" id="fbRate" role="radiogroup" aria-label="Rating">${[1, 2, 3, 4, 5].map((n) => `<button data-v="${n}" role="radio" aria-checked="false" aria-label="${n} star${n > 1 ? 's' : ''}">★</button>`).join('')}</div>
+    <div class="section-label">Category</div>
+    <div class="seg" id="fbCat">${cats.map(([v, l]) => `<button data-v="${v}" aria-pressed="${v === f.cat}">${l}</button>`).join('')}</div>
+    <div class="section-label">Notes</div>
+    <textarea class="input" id="fbNotes" rows="4" placeholder="What happened, what you expected, or what would help in the field…"></textarea>
+    ${ctx.s ? `<label class="checkrow"><input type="checkbox" id="fbAttach"><span>Attach current survey report (PDF)<br><small class="mono">${esc(ctx.s.name)}</small></span></label>` : ''}
+    <div class="msg" style="font-weight:400;color:var(--muted);margin:8px 0">Goes to ${FEEDBACK_TO}. App version, device, screen size, theme and current screen are added so we can reproduce it.</div>
+    <button class="btn primary block" id="fbSend">SEND FEEDBACK ▶</button>`, { tall: true });
+  $$('#fbRate button', s.el).forEach((b) => (b.onclick = () => { f.rating = +b.dataset.v; $$('#fbRate button', s.el).forEach((x) => { x.classList.toggle('on', +x.dataset.v <= f.rating); x.setAttribute('aria-checked', +x.dataset.v === f.rating); }); }));
+  $$('#fbCat button', s.el).forEach((b) => (b.onclick = () => { f.cat = b.dataset.v; $$('#fbCat button', s.el).forEach((x) => x.setAttribute('aria-pressed', x === b)); }));
+  $('#fbNotes', s.el).oninput = (e) => (f.notes = e.target.value);
+  if ($('#fbAttach', s.el)) $('#fbAttach', s.el).onchange = (e) => (f.attach = e.target.checked);
+  // Build everything synchronously inside the tap so iOS keeps the user gesture for navigator.share.
+  $('#fbSend', s.el).onclick = () => {
+    const title = 'Level Book feedback v' + R.APP_VERSION; const text = feedbackText(f, ctx);
+    let file = null;
+    if (f.attach && ctx.s) { try { file = new File([R.pdfReport(ctx.job, [ctx.s], includesFor(ctx.job)).output('blob')], R.fileBase(ctx.job, ctx.s) + '.pdf', { type: 'application/pdf' }); } catch (e) { console.warn(e); } }
+    const mail = (note) => { const url = feedbackMailto(f, ctx, note); if (window.__lbMailHook) return window.__lbMailHook(url); location.href = url; };
+    const done = () => { s.close(); toast('Thanks – feedback ready to send'); };
+    if (N()) { const p = file ? N().shareFile({ blob: file, name: file.name, title, text }) : N().shareText({ title, text }); p.then((r) => r !== 'cancelled' && done()).catch(() => mail()); return; }
+    let data = null;
+    if (navigator.share) { data = { title, text }; if (file) { if (navigator.canShare && navigator.canShare({ files: [file] })) data.files = [file]; else data = null; } }
+    if (data) navigator.share(data).then(done).catch((err) => { if (err && err.name === 'AbortError') return; mail(file ? 'Report could not be attached here – use Share in the book to send it.' : ''); });
+    else { mail(file ? 'Report not attached (this browser cannot share files) – use Share in the book to send it.' : ''); s.close(); }
+  };
+  return s;
 }
 
 // ---------- theme ----------
@@ -114,9 +204,10 @@ function jobStatus(job) {
 const chip = (st) => st === 'closed' ? '<span class="chip closed">✔ closed</span>' : st === 'check' ? '<span class="chip check">⚠ check</span>' : '<span class="chip open">○ open</span>';
 const stColor = (st) => (st === 'closed' ? 'var(--pass)' : st === 'check' ? 'var(--warn)' : 'var(--muted)');
 function jobSummary(job) {
-  const n = { loop: 0, run: 0, site: 0 }; job.surveys.forEach((s) => n[s.type]++);
+  const n = { loop: 0, run: 0, site: 0, stake: 0 }; job.surveys.forEach((s) => n[s.type]++);
   const parts = []; if (n.loop) parts.push(`${n.loop} loop${n.loop > 1 ? 's' : ''}`); if (n.run) parts.push(`${n.run} run${n.run > 1 ? 's' : ''}`);
   if (n.site) { const pts = job.surveys.filter((s) => s.type === 'site').reduce((a, s) => a + s.readings.filter((r) => r.type !== 'BS').length, 0); parts.push(`Site levels · ${pts} pts`); }
+  if (n.stake) parts.push(`${n.stake} stake out${n.stake > 1 ? 's' : ''}`);
   return parts.join(' · ') || 'No surveys yet';
 }
 const openSurveyOf = (job) => [...job.surveys].sort((a, b) => b.updated - a.updated).find((s) => !s.closed);
@@ -145,6 +236,7 @@ function render() {
       if (h[2] === 's') {
         const s = getSurvey(job, h[3]); if (!s) return go(`#/j/${job.id}`);
         const [view, q] = (h[4] || 'book').split('?');
+        if (s.type === 'stake') return view === 'entry' ? stakeScreen(job, s) : view === 'share' ? shareScreen(job, s) : stakeSheetScreen(job, s);
         if (view === 'entry') return entryScreen(job, s, new URLSearchParams(q || ''));
         if (view === 'book') return bookScreen(job, s);
         if (view === 'close') return closureScreen(job, s);
@@ -173,6 +265,7 @@ function jobsScreen() {
   $('#sortBtn').onclick = () => choose('Sort jobs', [{ v: 'date', label: 'Project date' }, { v: 'name', label: 'Name' }, { v: 'edited', label: 'Last edited' }], jobsUI.sort, (v) => { jobsUI.sort = v; jobsScreen(); });
   $('#newJob').onclick = () => jobSheet();
   drawList();
+  if (!db.prefs.welcomed) welcomeCard();
 }
 function drawList() {
   const list = $('#list'); const q = jobsUI.q.trim().toLowerCase();
@@ -270,7 +363,7 @@ function menuScreen(job) {
     <div class="scroll">
       ${ro ? `<div class="banner"><span><b>Archived</b> · read-only</span><button class="btn blue" id="restore">RESTORE</button></div>` : ''}
       <div class="section-label">${esc(R.usDate(job.date))} · ${esc(job.description || '')}</div>
-      ${[['loop', 'Level Loop', 'Start and close on the same benchmark'], ['run', 'Level Run', 'Carry elevation from one BM to another'], ['site', 'Site Levels', 'One setup, many side shots'], ['peg', 'Peg Test', pegMenuLine()]].map(([t, n, d]) => `<button class="modecard" data-mode="${t}" ${ro && t !== 'peg' ? 'disabled' : ''}>${I[t]}<div><div class="mt">${n}</div><div class="md">${d}</div></div></button>`).join('')}
+      ${[['loop', 'Level Loop', 'Start and close on the same benchmark'], ['run', 'Level Run', 'Carry elevation from one BM to another'], ['site', 'Site Levels', 'One setup, many side shots'], ['stake', 'Stake Out', 'Backsight a BM, set grade stakes – cut/fill'], ['peg', 'Peg Test', pegMenuLine()]].map(([t, n, d]) => `<button class="modecard" data-mode="${t}" ${ro && t !== 'peg' ? 'disabled' : ''}>${I[t]}<div><div class="mt">${n}</div><div class="md">${d}</div></div></button>`).join('')}
       <div class="section-label">Recent</div>
       ${surveys.length ? `<div class="recent">${surveys.map((s) => `<button data-sid="${s.id}"><span class="rn">${esc(s.name)}</span><span class="tag">${SHORT[s.type].toUpperCase()}</span>${s.method === 'three' && s.type !== 'site' ? '<span class="tag blue">3-WIRE</span>' : ''}${statusChip(s)}</button>`).join('')}</div>` : '<div class="empty" style="padding:24px">No surveys in this job yet. Pick a mode above.</div>'}
     </div>
@@ -284,7 +377,7 @@ function menuScreen(job) {
 }
 function statusChip(s) {
   const st = C.surveyStatus(s);
-  if (st === 'closed') { const cl = s.type === 'site' ? null : C.closure(s); return `<span class="chip closed">✔ ${cl ? Math.abs(cl.misclosure).toFixed(3) : 'done'}</span>`; }
+  if (st === 'closed') { const cl = s.type === 'site' || s.type === 'stake' ? null : C.closure(s); return `<span class="chip closed">✔ ${cl ? Math.abs(cl.misclosure).toFixed(3) : 'done'}</span>`; }
   if (st === 'check') return `<span class="chip check">⚠ ${Math.abs(C.closure(s).misclosure).toFixed(3)}</span>`;
   return '<span class="chip open">OPEN</span>';
 }
@@ -306,14 +399,15 @@ function setupScreen(job, type) {
         <label class="field"><span>Rod person</span><input class="input" id="rodp" autocomplete="off"></label>
         <div class="field"><span>Instrument</span><button class="selectbtn" id="inst"><span id="instv">Automatic level</span><span>▾</span></button></div>
         <div class="field"><span>Units</span><span class="chip locked">🔒 US decimal ft</span></div>`)}
-      ${type === 'site' ? '' : sec('Reading method', `<div class="seg" id="method"><button data-v="single" aria-pressed="true">Single wire</button><button data-v="three" aria-pressed="false">Three-wire</button></div>
+      ${type === 'site' || type === 'stake' ? '' : sec('Reading method', `<div class="seg" id="method"><button data-v="single" aria-pressed="true">Single wire</button><button data-v="three" aria-pressed="false">Three-wire</button></div>
         <div id="threeOpts" hidden style="margin-top:16px"><label class="field"><span>Stadia constant K</span><input class="input num" id="sk" inputmode="decimal" value="100"></label>
         <label class="field"><span>Wire spread tolerance</span><div class="suffix" data-suffix="ft"><input class="input num" id="stol" inputmode="decimal" value="0.003"></div></label></div>`)}
       ${sec('Starting benchmark', `<label class="field"><span>BM name</span><input class="input" id="bmn" value="BM-1" autocomplete="off"></label><label class="field"><span>Elevation</span>${elevInput('bme')}</label>`)}
       ${type === 'run' ? sec('Closing benchmark', `<label class="field"><span>BM name</span><input class="input" id="cbn" placeholder="e.g. BM-7" autocomplete="off"></label><label class="field"><span>Known elevation</span>${elevInput('cbe')}</label>`) : ''}
       ${type === 'loop' ? sec('Closing benchmark', `<div class="msg" style="color:var(--muted)">A loop closes back on the starting benchmark.</div>`) : ''}
+      ${sec('Distances', distRow(db.prefs.useDist, { id: 'setupDist', note: 'Default for this survey; you can switch it on the entry screen. OFF: no DIST field, no peg correction, no balance/sight checks, closure by setups.' }))}
       ${type === 'site' ? '' : sec('Peg correction', pegSetupBlock())}
-      ${sec('Checks', `${type === 'site' ? '' : `<div class="field"><span>Closure standard</span><button class="selectbtn" id="std"><span id="stdv">${C.STANDARDS[0].label} · 0.050 ft√mi</span><span>▾</span></button></div><label class="field" id="customRow" hidden><span>Custom constant (ft√mi)</span><input class="input num" id="ck" inputmode="decimal" value="0.05"></label>`}
+      ${sec('Checks', `${type === 'site' || type === 'stake' ? '' : `<div class="field"><span>Closure standard</span><button class="selectbtn" id="std"><span id="stdv">${C.STANDARDS[0].label} · 0.050 ft√mi</span><span>▾</span></button></div><label class="field" id="customRow" hidden><span>Custom constant (ft√mi)</span><input class="input num" id="ck" inputmode="decimal" value="0.05"></label>`}
         <div class="field"><span>Rod length</span><button class="selectbtn" id="rodl"><span id="rodlv">16 ft</span><span>▾</span></button></div>
         <label class="field"><span>BS/FS imbalance limit</span><div class="suffix" data-suffix="ft"><input class="input num" id="imb" inputmode="decimal" value="10"></div></label>
         <label class="field"><span>Max sight length</span><div class="suffix" data-suffix="ft"><input class="input num" id="maxs" inputmode="decimal" value="300"></div></label>`)}
@@ -321,7 +415,8 @@ function setupScreen(job, type) {
     <div class="pinned"><button class="btn primary block" id="start" disabled>START BOOK ▶</button></div></div>`;
   bindCommon(root);
   const st = { inst: 'Automatic level', method: 'single', std: '3rd', rod: 16 };
-  const latest = C.latestPeg(db.pegTests); st.pegOn = !!latest && !latest.sample;
+  const latest = C.latestPeg(db.pegTests); st.pegOn = !!latest && !latest.sample; st.useDist = db.prefs.useDist;
+  $('#setupDist').onclick = () => { st.useDist = !st.useDist; setSwitch($('#setupDist'), st.useDist); };
   const pegSw = $('#pegSw');
   if (pegSw) { setSwitch(pegSw, st.pegOn); pegSw.onclick = () => { if (!latest) return; st.pegOn = !st.pegOn; setSwitch(pegSw, st.pegOn); }; }
   $('#pegShoot') && ($('#pegShoot').onclick = () => go(`#/j/${job.id}/peg/new`));
@@ -337,12 +432,12 @@ function setupScreen(job, type) {
     if (!valid()) return;
     Object.assign(s, {
       name: $('#sn').value.trim(), observer: $('#obs').value.trim(), rodPerson: $('#rodp').value.trim(), instrument: st.inst,
-      method: type === 'site' ? 'single' : st.method, stadiaK: parseFloat($('#sk')?.value) || 100, spreadTol: parseFloat($('#stol')?.value) || 0.003,
+      method: type === 'site' || type === 'stake' ? 'single' : st.method, stakes: type === 'stake' ? [] : undefined, stadiaK: parseFloat($('#sk')?.value) || 100, spreadTol: parseFloat($('#stol')?.value) || 0.003,
       startBM: { name: ($('#bmn').value.trim() || 'BM-1').toUpperCase(), elev: C.round(parseFloat($('#bme').value), 3) },
       closeBM: type === 'run' ? { name: $('#cbn').value.trim().toUpperCase(), elev: C.round(parseFloat($('#cbe').value), 3) } : { name: '', elev: null },
       standard: st.std, customK: parseFloat($('#ck')?.value) || 0.05, rodLength: st.rod,
       imbalanceLimit: parseFloat($('#imb').value) || 10, maxSight: parseFloat($('#maxs').value) || 300,
-      peg: type !== 'site' && latest ? { on: st.pegOn, test: pegSnap(latest) } : null,
+      peg: type !== 'site' && latest ? { on: st.pegOn, test: pegSnap(latest) } : null, useDist: st.useDist,
     });
     job.surveys.push(s); touch(job, s); entry = null; go(`#/j/${job.id}/s/${s.id}/entry`);
   };
@@ -391,6 +486,7 @@ function entryEval(s, st) {
     out.wires.r = { v, error: er ? (er === 'over' ? '> ROD' : '< 0') : null, impossible: !!er };
     if (er) out.errors.push(er === 'over' ? `Reading over rod length (${L} ft)` : 'Reading below zero');
   }
+  out.distRec = out.dist; if (!C.usesDist(s)) out.dist = null; // switch OFF: distance not used
   if (out.dist != null && s.maxSight && out.dist > s.maxSight) out.warns.push(`⚠ Sight ${out.dist} ft > max ${s.maxSight} ft`);
   if (st.type === 'FS' && out.dist != null) { const su = ctx.setups[ctx.setups.length - 1]; if (su && su.bsDist != null && Math.abs(su.bsDist - out.dist) > s.imbalanceLimit) out.warns.push(`⚠ Setup imbalance ${C.round(Math.abs(su.bsDist - out.dist), 1)} ft > ${s.imbalanceLimit} ft`); }
   if (out.value != null && !isNaN(out.value)) {
@@ -423,7 +519,7 @@ function entryScreen(job, s, params) {
   const key = (k) => {
     const f = st.active;
     if (k === 'ok') return confirmEntry(job, s);
-    if (k === 'next') { st.active = st.three ? { t: 'm', m: 'b', b: 't' }[f] : f === 'reading' ? 'dist' : 'reading'; return draw(); }
+    if (k === 'next') { st.active = st.three ? { t: 'm', m: 'b', b: 't' }[f] : f === 'reading' && C.usesDist(s) ? 'dist' : 'reading'; return draw(); }
     if (k === 'clr') { st[f] = ''; st.accepted = false; return draw(); }
     if (k === 'back') { st[f] = st[f].slice(0, -1); st.accepted = false; return draw(); }
     let v = st[f];
@@ -457,14 +553,16 @@ function drawEntry(job, s) {
     <div class="ptrow"><input class="input" id="pt" value="${esc(st.point)}" aria-label="Point name" autocomplete="off" autocapitalize="characters" ${st.type === 'BS' && st.editIdx == null ? 'readonly' : ''}></div>
     ${st.type === 'FS' && st.editIdx == null && closeBM && closeBM.name && s.type !== 'site' && st.point !== closeBM.name ? `<div class="quick"><button id="closeOn">Close on ${esc(closeBM.name)}</button></div>` : ''}
     ${st.three ? `${rbox('t', 'TOP', 'w3')}${rbox('m', 'MID', 'w3')}${rbox('b', 'BOT', 'w3')}
-      <div class="rescard"><div class="result"><span class="lbl">MEAN </span>${ev.tw ? ev.tw.mean.toFixed(3) : '—'}</div><div class="result"><span class="lbl">DIST </span>${ev.dist != null && !isNaN(ev.dist) ? ev.dist.toFixed(1) + ' ft' : '—'}</div>${resLine}</div>`
-    : `${rbox('reading', 'READING', '')}${rbox('dist', 'DIST ft', 'small')}${resLine}`}
-    ${ev.peg && !ev.impossible ? (ev.peg.noDist ? '<div class="msg pegmsg nd">Peg: no distance – reading used as is</div>' : `<div class="msg pegmsg">Peg ${sgn(ev.peg.corr)} → ${ev.peg.v.toFixed(3)}</div>`) : ''}
+      <div class="rescard"><div class="result"><span class="lbl">MEAN </span>${ev.tw ? ev.tw.mean.toFixed(3) : '—'}</div><div class="result${C.usesDist(s) ? '' : ' muted'}"><span class="lbl">DIST </span>${ev.distRec != null && !isNaN(ev.distRec) ? ev.distRec.toFixed(1) + ' ft' : '—'}${C.usesDist(s) ? '' : '<span class="lbl"> (not used)</span>'}</div>${resLine}</div>`
+    : `${rbox('reading', 'READING', '')}${C.usesDist(s) ? rbox('dist', 'DIST ft', 'small') : ''}${resLine}`}
+    ${distRow(C.usesDist(s), { compact: true, note: C.usesDist(s) ? '' : st.three ? 'Stadia shown, not used' : 'No DIST · read as is' })}
+    ${ev.peg && !ev.impossible ? (ev.peg.noDist ? `<div class="msg pegmsg nd">${C.usesDist(s) ? 'Peg: no distance – reading used as is' : 'Peg off – no distance'}</div>` : `<div class="msg pegmsg">Peg ${sgn(ev.peg.corr)} → ${ev.peg.v.toFixed(3)}</div>`) : ''}
     ${ev.errors.map((e) => `<div class="msg err">✕ ${esc(e)}</div>`).join('')}${ev.warns.map((w) => `<div class="msg warn">${esc(w)}</div>`).join('')}
     ${ev.acceptable && !st.accepted ? '<button class="btn accept" id="accept">Accept anyway</button>' : ''}${ev.acceptable && st.accepted ? '<div class="msg warn">⚠ Accepted – note added to row</div>' : ''}
     ${st.editIdx != null && st.editIdx === s.readings.length - 1 ? '<button class="btn danger accept" id="delR">Delete this reading</button>' : ''}`;
   $$('#rt button').forEach((b) => (b.onclick = () => { if (!allowed.includes(b.dataset.v)) return; st.type = b.dataset.v; if (st.editIdx == null) st.point = st.type === 'BS' ? ctx.currentPoint : nextPointName(s, st.type); drawEntry(job, s); }));
   $$('.rbox', p).forEach((b) => (b.onclick = () => { st.active = b.dataset.f; drawEntry(job, s); }));
+  $('#distSw', p).onclick = () => toggleDist(job, s, () => { if (!C.usesDist(s) && st.active === 'dist') st.active = 'reading'; drawEntry(job, s); });
   $('#pt').oninput = (e) => { st.point = e.target.value.toUpperCase(); e.target.value = st.point; $('#confirm').disabled = !entryEval(s, st).canConfirm; };
   $('#pt').onchange = () => drawEntry(job, s);
   $('#closeOn') && ($('#closeOn').onclick = () => { st.point = closeBM.name; drawEntry(job, s); });
@@ -495,7 +593,7 @@ async function confirmEntry(job, s) {
   const st = entry; const ev = entryEval(s, st); if (!ev.canConfirm) return;
   const r = { id: st.editIdx != null ? s.readings[st.editIdx].id : uid(), type: st.type, point: st.point.trim().toUpperCase() };
   if (st.three) r.wires = { t: parseFloat(st.t), m: parseFloat(st.m), b: parseFloat(st.b) };
-  else { r.value = parseFloat(st.reading); r.text = st.reading.includes('.') && !st.reading.endsWith('.') ? st.reading : r.value.toFixed(2); if (st.dist !== '' && st.dist !== '.') r.dist = parseFloat(st.dist); }
+  else { r.value = parseFloat(st.reading); r.text = st.reading.includes('.') && !st.reading.endsWith('.') ? st.reading : r.value.toFixed(2); if (C.usesDist(s) && st.dist !== '' && st.dist !== '.') r.dist = parseFloat(st.dist); }
   if (st.accepted && ev.acceptable) { r.accepted = true; r.note = st.note; }
   if (st.editIdx != null) { s.readings[st.editIdx] = r; touch(job, s); entry = null; toast('Reading updated – book recalculated'); return go(`#/j/${job.id}/s/${s.id}/book`); }
   s.readings.push(r); s.closed = false; touch(job, s);
@@ -550,7 +648,7 @@ function bookScreen(job, s) {
     <div class="summary">
       <div>ΣBS ${comp.sumBS.toFixed(3)}   ΣFS ${comp.sumFS.toFixed(3)}</div>
       <div>ΣBS−ΣFS ${sgn(comp.arith.diff)} vs Δ${comp.arith.against === 'HI' ? 'HI' : 'elev'} ${sgn(comp.arith.delta)} <span class="${comp.arith.ok ? 'ok' : 'bad'}">${comp.arith.ok ? '✔ OK' : '✕ FAIL'}</span></div>
-      <div class="${balWarn ? 'wn' : ''}">BS/FS dist ${comp.totalBSdist} / ${comp.totalFSdist} ft · bal ${comp.imbalance > 0 ? '+' : ''}${comp.imbalance}${balWarn ? ' ⚠' : ''}</div>
+      ${comp.distUsed ? `<div class="${balWarn ? 'wn' : ''}">BS/FS dist ${comp.totalBSdist} / ${comp.totalFSdist} ft · bal ${comp.imbalance > 0 ? '+' : ''}${comp.imbalance}${balWarn ? ' ⚠' : ''}</div>` : '<div style="color:var(--muted)">Distances not used · no balance check</div>'}
       ${three ? `<div class="${comp.failedChecks ? 'bad' : ''}">Failed wire checks: ${comp.failedChecks} ${comp.failedChecks ? '✕' : '✔'}</div>` : ''}
     </div>
     <div class="pinned">${ro ? '<div class="msg" style="color:var(--muted);text-align:center">Archived job – read-only</div>' : `
@@ -592,16 +690,17 @@ function closureScreen(job, s) {
   const bal = Math.abs(comp.imbalance) > s.imbalanceLimit;
   root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}/s/${s.id}/book`, label: 'Book' }, title: `Closure · ${s.name}`, right: `<button class="iconbtn" id="shareBtn" aria-label="Share report">${I.share}</button>` })}
     <div class="scroll">
-      <div class="big ${verdict[0]}" role="status">${verdict[2]}<div><div class="bw">${verdict[1]}</div><div>${cl.closedOn ? `Misclosure ${sgn(cl.misclosure)} ft · allowable ${cl.allowable == null ? 'n/a' : '±' + cl.allowable.toFixed(3)} ft` : `Last FS must be on ${esc(cl.bm?.name || '')}`}</div></div></div>
+      <div class="big ${verdict[0]}" role="status">${verdict[2]}<div><div class="bw">${verdict[1]}</div><div>${cl.closedOn ? `Misclosure ${sgn(cl.misclosure)} ft · allowable ${cl.allowable == null ? (cl.distOff ? 'n/a – distances not used' : 'n/a') : '±' + cl.allowable.toFixed(3)} ft` : `Last FS must be on ${esc(cl.bm?.name || '')}`}</div></div></div>
       <div class="section-label">Peg correction</div>
       <div class="card" style="padding:4px 16px">${pegSwitchRow(s, comp, job.archived)}</div>
+      <div class="card" style="padding:4px 16px;margin-top:8px">${distRow(!cl.distOff, { id: 'closeDist', note: cl.distOff ? 'Off · allowable and distance adjustment not available' : '' })}</div>
       <div class="section-label">Closure</div>
       <div class="card kv">
         <span class="k">Closed on</span><span class="v">${esc(cl.bm?.name || '—')}</span>
         <span class="k">Known elevation</span><span class="v">${C.f3(cl.known)}</span>
         <span class="k">Computed elevation</span><span class="v">${C.f3(cl.computed)}</span>
         <span class="k">Misclosure</span><span class="v">${sgn(cl.misclosure)}</span>
-        <span class="k">Distance</span><span class="v">${cl.feet} ft · ${cl.miles.toFixed(3)} mi</span>
+        <span class="k">Distance</span><span class="v">${cl.distOff ? 'not used' : `${cl.feet} ft · ${cl.miles.toFixed(3)} mi`}</span>
         <span class="k">Setups</span><span class="v">${cl.setups}</span>
         <span class="k">Standard</span><span class="v" style="font-family:var(--sans);font-size:15px">${esc(std.id === 'custom' ? 'Custom' : std.label)}</span>
         <span class="k">Allowable = ${cl.k}·√mi</span><span class="v">${cl.allowable == null ? 'n/a' : '±' + cl.allowable.toFixed(3)}</span>
@@ -611,14 +710,15 @@ function closureScreen(job, s) {
         <span class="k">ΣBS − ΣFS</span><span class="v">${sgn(comp.arith.diff)}</span>
         <span class="k">Last − first elev</span><span class="v">${sgn(comp.arith.delta)}</span>
         <span class="k">Arithmetic check</span><span class="v" style="color:${comp.arith.ok ? 'var(--pass)' : 'var(--err)'}">${comp.arith.ok ? '✔ PASS' : '✕ FAIL'}</span>
-        <span class="k">BS / FS distance</span><span class="v">${comp.totalBSdist} / ${comp.totalFSdist}</span>
-        <span class="k">Distance balance</span><span class="v" style="color:${bal ? 'var(--warn)' : 'inherit'}">${comp.imbalance > 0 ? '+' : ''}${comp.imbalance} ft${bal ? ' ⚠' : ' ✔'}</span>
+        ${comp.distUsed ? `<span class="k">BS / FS distance</span><span class="v">${comp.totalBSdist} / ${comp.totalFSdist}</span>
+        <span class="k">Distance balance</span><span class="v" style="color:${bal ? 'var(--warn)' : 'inherit'}">${comp.imbalance > 0 ? '+' : ''}${comp.imbalance} ft${bal ? ' ⚠' : ' ✔'}</span>` : '<span class="k">Distances</span><span class="v" style="font-family:var(--sans)">not used</span>'}
       </div>
       ${cl.closedOn ? `<div class="section-label">Adjusted elevations</div>
-      <div class="seg" id="adjm"><button data-v="setups" aria-pressed="${method === 'setups'}">By setups</button><button data-v="distance" aria-pressed="${method === 'distance'}">By distance</button></div>
+      <div class="seg" id="adjm"><button data-v="setups" aria-pressed="${method === 'setups' || cl.distOff}">By setups</button><button data-v="distance" aria-pressed="${method === 'distance' && !cl.distOff}" ${cl.distOff ? 'disabled style="opacity:.35"' : ''}>By distance</button></div>
+      ${cl.distOff ? '<div class="msg" style="font-weight:400;color:var(--muted);margin-top:6px">Distances are off for this survey, so adjustment is by setups.</div>' : ''}
       <div class="card" style="margin-top:8px;padding:8px 12px"><table class="adj"><thead><tr><th>POINT</th><th>MEASURED</th><th>CORR</th><th>ADJUSTED</th></tr></thead><tbody>
       ${adj.map((p) => `<tr><td>${esc(p.point)}${p.side ? ' <span class="tag">IFS</span>' : ''}</td><td>${C.f3(p.elev)}</td><td>${sgn(p.correction)}</td><td><b>${C.f3(p.adjusted)}</b></td></tr>`).join('')}</tbody></table>
-      <div class="msg" style="color:var(--muted);font-weight:400;margin-top:8px">Correction ${sgn(-cl.misclosure)} ft distributed ${method === 'distance' ? 'in proportion to cumulative sight distance' : 'equally per setup'}; the closing BM is held at its known elevation.</div></div>` : ''}
+      <div class="msg" style="color:var(--muted);font-weight:400;margin-top:8px">Correction ${sgn(-cl.misclosure)} ft distributed ${method === 'distance' && !cl.distOff ? 'in proportion to cumulative sight distance' : 'equally per setup'}; the closing BM is held at its known elevation.</div></div>` : ''}
       <button class="btn" style="margin-top:16px;width:100%" id="reopen" ${job.archived ? 'disabled' : ''}>Reopen ${s.type} to add readings</button>
     </div>
     <div class="pinned"><div class="row2" style="grid-template-columns:2fr 1fr"><button class="btn primary" id="shareRep">${I.share.replace('<svg', '<svg width="22" height="22"')} SHARE REPORT</button><button class="btn" id="print">PRINT BOOK</button></div></div></div>`;
@@ -626,6 +726,7 @@ function closureScreen(job, s) {
   $('#shareBtn').onclick = $('#shareRep').onclick = () => go(`#/j/${job.id}/s/${s.id}/share`);
   $$('#adjm button').forEach((b) => (b.onclick = () => { s.adjustMethod = b.dataset.v; touch(job, s); closureScreen(job, s); }));
   bindPegSwitch(job, s, () => closureScreen(job, s));
+  $('#closeDist') && ($('#closeDist').onclick = () => toggleDist(job, s, () => closureScreen(job, s)));
   $('#reopen').onclick = () => { s.closed = false; touch(job, s); go(`#/j/${job.id}/s/${s.id}/book`); };
   $('#print').onclick = () => { const doc = R.pdfReport(job, [s], includesFor(job)); openBlob(doc.output('blob'), R.fileBase(job, s) + '.pdf'); };
 }
@@ -720,6 +821,11 @@ function pegMenuLine() {
   return t ? `Two-peg collimation check<br><span class="mono">Last ${esc(R.usDate(t.date))} · ${C.pegLabel(pegEval(t).per100)}${t.sample ? ' (sample)' : ''}</span>` : 'Two-peg collimation check';
 }
 function setSwitch(el, on) { el.setAttribute('aria-checked', String(!!on)); }
+// "Use distance" switch row (same switch style; the row + switch give a ≥56 px tap target).
+function distRow(on, { id = 'distSw', note, locked, compact } = {}) {
+  const d = note ?? (on ? 'Sight distances used for peg correction, balance checks & closure' : 'Readings used as read · no distance checks');
+  return `<div class="switchrow distrow${compact ? ' compact' : ''}"><div class="sw-l"><div class="sw-t">Use distance</div>${d ? `<div class="sw-d">${d}</div>` : ''}</div><button class="switch" id="${id}" role="switch" aria-checked="${locked ? 'true' : !!on}" aria-label="Use distance" ${locked ? 'disabled' : ''}></button></div>`;
+}
 const pegPass = (t) => { const p = pegEval(t); return p.pass ? '<span class="chip closed">✔ within tol</span>' : '<span class="chip check">⚠ over tol</span>'; };
 function pegSetupBlock() {
   const t = C.latestPeg(db.pegTests);
@@ -802,7 +908,7 @@ function pegSetupScreen(job) {
         <label class="field"><span>Instrument (make / serial)</span><input class="input" id="pin" value="${esc(last?.instrument || '')}" placeholder="e.g. Auto level AT-B4 #41722" autocomplete="off"></label>
         <label class="field"><span>Observer</span><input class="input" id="pob" value="${esc(last?.observer || '')}" autocomplete="off"></label>
         <div class="field"><span>Rod length</span><button class="selectbtn" id="prl"><span id="prlv">16 ft</span><span>▾</span></button></div>`)}
-      ${sec('Pegs & sights', `${pegDiagram(56)}
+      ${sec('Pegs & sights', `${distRow(true, { id: 'pegDist', locked: true, note: '🔒 Peg test needs distances' })}${pegDiagram(56)}
         <label class="field" style="margin-top:12px"><span>Peg spacing A–B (D)</span>${num('pD', 200)}</label>
         <div class="msg" style="font-weight:400;color:var(--muted);margin:-8px 0 16px">Setup 1 is midway: <span class="mono" id="mid">100.0 / 100.0 ft</span></div>
         <div class="row2"><label class="field"><span>Setup 2 → A</span>${num('pA2', 10)}</label><label class="field"><span>Setup 2 → B</span>${num('pB2', 210)}</label></div>
@@ -931,11 +1037,148 @@ function pegResultScreen(job, t) {
   };
 }
 
+function toggleDist(job, s, rerender) {
+  s.useDist = !C.usesDist(s); touch(job, s);
+  toast(s.useDist ? 'Distances ON – whole survey recalculated' : 'Distances OFF – whole survey recalculated');
+  rerender();
+}
+// ---------- Stake out (DRAFT UI) ----------
+let stakeSt = null;
+const stakeSetups = (s) => s.readings.filter((r) => r.type === 'BS');
+const stakeHI = (s, setupIdx) => C.stakeSurvey(s).setups[setupIdx]?.hi ?? null;
+const stakeActual = (s, k) => C.corrected(k.value, C.usesDist(s) ? k.dist ?? null : null, C.pegFor(s)).v;
+const cfText = (st) => (st.kind == null ? '—' : st.kind === 'ON GRADE' ? 'ON GRADE' : `${st.kind} ${Math.abs(st.cf).toFixed(2)}`);
+function stakeScreen(job, s) {
+  if (job.archived) return go(`#/j/${job.id}/s/${s.id}/book`);
+  const setups = stakeSetups(s).length;
+  if (!stakeSt || stakeSt.sid !== s.id) stakeSt = { sid: s.id, mode: setups ? 'stake' : 'bs', active: setups ? 'design' : 'reading', reading: '', dist: '', design: '', point: nextStakeName(s) };
+  const root = app();
+  root.innerHTML = `<div class="screen">
+    <div class="strip"><button class="back" id="toBook" aria-label="Back to stake sheet" style="font-size:28px;padding:0 8px">‹</button><div class="st-l"><div class="st1"><span id="st1"></span> <span class="tag blue">STAKE</span></div><div class="st2" id="st2"></div></div><button class="iconbtn" id="bookBtn" aria-label="Stake sheet">${I.book}</button></div>
+    <div class="entry-mid"><div class="rodcol"><svg id="rod" role="img" aria-label="Level rod"></svg></div><div class="panel" id="panel"></div></div>
+    <div class="keypad" id="keypad">
+      <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button><button class="fn" data-k="back" aria-label="Backspace">⌫</button>
+      <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button><button class="confirm" data-k="ok" id="confirm">CONFIRM</button>
+      <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+      <button data-k=".">.</button><button data-k="0">0</button><button class="fn" data-k="clr">CLR</button><button class="fn" data-k="next">NEXT ↓</button>
+    </div></div>`;
+  $('#toBook').onclick = $('#bookBtn').onclick = () => { stakeSt = null; go(`#/j/${job.id}/s/${s.id}/book`); };
+  rodView = new RodView($('#rod'));
+  const key = (k) => {
+    const st = stakeSt; const f = st.active;
+    if (k === 'ok') return stakeConfirm(job, s);
+    if (k === 'next') { const order = (st.mode === 'bs' ? ['reading', 'dist'] : ['design', 'reading', 'dist']).filter((x) => x !== 'dist' || C.usesDist(s)); st.active = order[(order.indexOf(f) + 1) % order.length]; return drawStake(job, s); }
+    if (k === 'clr') { st[f] = ''; return drawStake(job, s); }
+    if (k === 'back') { st[f] = st[f].slice(0, -1); return drawStake(job, s); }
+    let v = st[f];
+    if (k === '.') { if (v.includes('.')) return; v = (v || '0') + '.'; }
+    else {
+      const [ip, dp] = v.split('.'); const maxInt = f === 'dist' || f === 'design' ? 4 : 2; const maxDec = f === 'dist' ? 1 : 3;
+      if (dp == null && (ip || '').replace(/^0/, '').length >= maxInt) return; if (dp != null && dp.length >= maxDec) return; v = v === '0' ? k : v + k;
+    }
+    st[f] = v;
+    if (f === 'design' && /\.\d{3}$/.test(v)) st.active = 'reading';
+    drawStake(job, s);
+  };
+  $$('#keypad button').forEach((b) => b.addEventListener('click', () => key(b.dataset.k)));
+  window.onresize = () => rodView && rodView.draw();
+  drawStake(job, s);
+}
+function nextStakeName(s) { let n = (s.stakes || []).length + 1; const names = new Set((s.stakes || []).map((k) => k.point)); while (names.has(`STK${n}`)) n++; return `STK${n}`; }
+function drawStake(job, s) {
+  const st = stakeSt; const L = s.rodLength || 16; const peg = C.pegFor(s);
+  const num = (x) => (x === '' || x === '.' ? null : parseFloat(x));
+  const useD = C.usesDist(s); const reading = num(st.reading), dist = useD ? num(st.dist) : null, design = num(st.design);
+  const dRow = distRow(useD, { compact: true, note: useD ? '' : peg ? 'Peg off – no distance' : 'No DIST · read as is' });
+  const rErr = C.readingError(reading, L);
+  const rbox = (k, label, cls = '') => { const bad = (k === 'reading' && rErr) || (k === 'design' && st.calc?.out); return `<div class="rbox ${cls}${st.active === k ? ' active' : ''}${bad ? ' bad' : ''}" data-f="${k}" role="textbox" aria-label="${label}"><span class="lab">${label}</span><span class="val">${st[k] ? esc(st[k]) : '<span class="ph">–.––</span>'}</span></div>`; };
+  const p = $('#panel'); let ok = false;
+  if (st.mode === 'bs') {
+    const pc = C.corrected(reading, dist, peg); const hi = reading != null && !rErr ? C.round(Number(s.startBM.elev) + pc.v, 3) : null;
+    $('#st1').textContent = `BACKSIGHT · ${s.startBM.name} ${C.f3(Number(s.startBM.elev))}`;
+    $('#st2').innerHTML = `<small>HI</small> ${hi != null ? C.f3(hi) : '—'}`;
+    p.innerHTML = `<div class="minilabel">Backsight on benchmark</div><div class="ptrow"><input class="input" value="${esc(s.startBM.name)}" readonly aria-label="Benchmark"></div>
+      ${rbox('reading', 'BS READING')}${useD ? rbox('dist', 'DIST ft', 'small') : ''}${dRow}
+      <div class="result ${rErr ? 'bad' : ''}"><span class="lbl">HI </span>${hi != null ? C.f3(hi) : '—'}</div>
+      ${rErr ? `<div class="msg err">✕ Reading ${rErr === 'over' ? `over rod length (${L} ft)` : 'below zero'}</div>` : ''}
+      ${peg && pc.corr != null ? `<div class="msg pegmsg">Peg ${sgn(pc.corr)} → ${pc.v.toFixed(3)}</div>` : ''}
+      <div class="msg" style="font-weight:400;color:var(--muted)">HI = BM elevation + backsight. Then set grade stakes from this setup.</div>`;
+    ok = reading != null && !rErr;
+    const wires = reading != null ? [{ v: reading, main: true, active: true, error: !!rErr, impossible: !!rErr, label: st.reading, sub: rErr ? (rErr === 'over' ? '> ROD' : '< 0') : null }] : [];
+    rodView.set({ center: Math.max(0.15, Math.min(L - 0.15, reading ?? rodView.cur?.c ?? 5)), ppf: 800, rodLength: L, wires, dim: !!rErr, three: false, instant: !rodView.cur });
+  } else {
+    const setupIdx = stakeSetups(s).length - 1; const hi = stakeHI(s, setupIdx);
+    const pc = C.corrected(reading, dist, peg);
+    const calc = (st.calc = C.stakeCalc(hi, design, reading != null && !rErr ? pc.v : null, L));
+    $('#st1').textContent = `STAKE OUT · SETUP ${setupIdx + 1} · ${s.startBM.name}`;
+    $('#st2').innerHTML = `<small>HI</small> ${C.f3(hi)} <small>TGT</small> ${calc.target != null ? calc.target.toFixed(2) : '—'}${calc.kind ? ` <span class="stcf ${calc.kind === 'CUT' ? 'cut' : calc.kind === 'FILL' ? 'fill' : 'grade'}">${calc.kind === 'ON GRADE' ? 'ON GRADE' : `${calc.kind[0]} ${Math.abs(calc.cf).toFixed(2)}`}</span>` : ''}`;
+    const cfCls = calc.kind === 'CUT' ? 'cut' : calc.kind === 'FILL' ? 'fill' : calc.kind ? 'grade' : '';
+    p.innerHTML = `<div class="ptrow"><input class="input" id="spt" value="${esc(st.point)}" aria-label="Stake name" autocomplete="off" autocapitalize="characters"></div>
+      ${rbox('design', 'DESIGN ELEV', 'w3')}
+      <div class="tgtline ${calc.out ? 'bad' : ''}"><span class="lbl">TARGET ROD</span><b>${calc.target != null ? C.f3(calc.target) : '—'}</b></div>
+      ${calc.out ? `<div class="msg err">✕ ${calc.out === 'above' ? `Grade is ${Math.abs(calc.target).toFixed(2)} ft above the line of sight – raise the instrument or set an offset` : `Target ${calc.target.toFixed(2)} ft is past the ${L} ft rod – set up lower or use an offset stake`}</div>` : ''}
+      ${rbox('reading', 'ACTUAL ROD', 'w3')}
+      <div class="cfbox ${cfCls}" id="cf" ${calc.kind ? '' : 'hidden'}>${cfText(calc)}<small>ft</small></div>
+      ${useD ? rbox('dist', 'DIST ft', 'small') : ''}${dRow}
+      <div class="result"><span class="lbl">GROUND </span>${calc.ground != null ? C.f3(calc.ground) : '—'}</div>
+      ${rErr ? `<div class="msg err">✕ Reading ${rErr === 'over' ? `over rod length (${L} ft)` : 'below zero'}</div>` : ''}
+      ${peg && pc.corr != null ? `<div class="msg pegmsg">Peg ${sgn(pc.corr)} → ${pc.v.toFixed(3)}</div>` : ''}`;
+    $('#spt').oninput = (e) => { st.point = e.target.value.toUpperCase(); e.target.value = st.point; };
+    ok = design != null && reading != null && !rErr && st.point.trim() !== '';
+    // rod: target marker + actual crosshair
+    const tv = calc.target; const tIn = tv != null && !calc.out;
+    const wires = reading != null ? [{ v: reading, main: true, active: st.active === 'reading', error: !!rErr, impossible: !!rErr, label: st.reading, sub: rErr ? (rErr === 'over' ? '> ROD' : '< 0') : null }] : [];
+    const target = tv != null ? { v: Math.max(0, Math.min(L, tv)), label: calc.out ? (calc.out === 'above' ? '↑ TGT' : '↓ TGT') : tv.toFixed(2), sub: calc.out ? 'OFF ROD' : null, error: !!calc.out } : null;
+    const pts = [tIn ? tv : null, reading != null && !rErr ? reading : null].filter((x) => x != null);
+    const H = $('#rod').clientHeight || 380; const span = pts.length > 1 ? Math.abs(pts[0] - pts[1]) : 0;
+    const center = pts.length ? (Math.max(...pts) + Math.min(...pts)) / 2 : target ? target.v : rodView.cur?.c ?? 5;
+    rodView.set({ center: Math.max(0.15, Math.min(L - 0.15, center)), ppf: Math.min(800, Math.max(40, (H * 0.8) / (span + 0.25))), rodLength: L, wires, target, dim: !!calc.out || !!rErr, three: false, instant: !rodView.cur });
+  }
+  $$('.rbox', p).forEach((b) => (b.onclick = () => { st.active = b.dataset.f; drawStake(job, s); }));
+  $('#distSw', p).onclick = () => toggleDist(job, s, () => { if (!C.usesDist(s) && st.active === 'dist') st.active = 'reading'; drawStake(job, s); });
+  $('#confirm').disabled = !ok; $('#confirm').textContent = st.mode === 'bs' ? 'SET HI' : 'SAVE STAKE';
+}
+function stakeConfirm(job, s) {
+  const st = stakeSt; if ($('#confirm').disabled) return;
+  const num = (x) => (x === '' || x === '.' ? null : parseFloat(x));
+  if (st.mode === 'bs') {
+    s.readings.push({ id: uid(), type: 'BS', point: s.startBM.name, value: num(st.reading), text: st.reading, ...(C.usesDist(s) && num(st.dist) != null ? { dist: num(st.dist) } : {}) });
+    touch(job, s); Object.assign(st, { mode: 'stake', active: 'design', reading: '', dist: '' }); toast(`HI ${C.f3(stakeHI(s, stakeSetups(s).length - 1))} set`); return drawStake(job, s);
+  }
+  const k = { id: uid(), point: st.point.trim().toUpperCase(), design: num(st.design), value: num(st.reading), text: st.reading, setup: stakeSetups(s).length - 1, ...(C.usesDist(s) && num(st.dist) != null ? { dist: num(st.dist) } : {}) };
+  (s.stakes = s.stakes || []).push(k); touch(job, s);
+  const c = C.stakeCalc(stakeHI(s, k.setup), k.design, stakeActual(s, k), s.rodLength);
+  toast(`${k.point} · ${cfText(c)}`);
+  Object.assign(st, { design: '', reading: '', dist: '', active: 'design', point: nextStakeName(s) }); drawStake(job, s);
+}
+function stakeSheetScreen(job, s) {
+  const ro = job.archived; const root = app(); const L = s.rodLength || 16;
+  const setups = stakeSetups(s);
+  const ss = C.stakeSurvey(s); const rows = ss.rows.map((c, i) => ({ k: s.stakes[i], c }));
+  root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}`, label: 'Job' }, title: s.name, right: `<span class="tag">STAKE</span><button class="iconbtn" id="shareBtn" aria-label="Share stake sheet">${I.share}</button>` })}
+    <div class="booktools"><div class="msg mono" style="font-size:15px">${setups.map((b, i) => `Setup ${i + 1}: BS ${esc(s.startBM.name)} ${C.fmtReading(b.value, b.text)} → HI <b>${C.f3(stakeHI(s, i))}</b>`).join('<br>') || 'No backsight yet'}</div></div>
+    <div class="tablewrap"><table class="book stake"><thead><tr><th>STAKE</th><th>DESIGN</th><th>TGT</th><th>ROD</th><th>CUT/FILL</th></tr></thead><tbody>
+      ${rows.map(({ k, c }) => `<tr><td>${esc(k.point)}</td><td>${C.f3(k.design)}</td><td>${C.f3(c.target)}</td><td>${C.fmtReading(k.value, k.text)}</td><td><span class="cf ${c.kind === 'CUT' ? 'cut' : c.kind === 'FILL' ? 'fill' : 'grade'}">${C.cfShort(c)}</span>${c.out ? ' <span class="wf" title="Target off the rod">⚠</span>' : ''}</td></tr>`).join('')}
+    </tbody></table>${rows.length ? '' : '<div class="empty">No stakes yet. Tap + NEXT STAKE.</div>'}</div>
+    <div class="summary"><div>${rows.length} stake${rows.length === 1 ? '' : 's'} · ${rows.filter((r) => r.c.kind === 'CUT').length} cut · ${rows.filter((r) => r.c.kind === 'FILL').length} fill · ground = HI − rod</div><div>Cut/fill = ground − design · rod ${L} ft · distances ${ss.distUsed ? 'used' : 'not used'}${ss.peg ? ` · peg ${C.pegLabel(ss.peg.per100)}` : ''}</div></div>
+    <div class="pinned">${ro ? '<div class="msg" style="color:var(--muted);text-align:center">Archived job – read-only</div>' : `<button class="btn primary block" id="nextStake">＋ NEXT STAKE</button>
+      <div class="row2"><button class="btn" id="newBS">NEW SETUP (BS)</button><button class="btn blue" id="finish">FINISH ▶</button></div>`}</div></div>`;
+  bindCommon(root);
+  $('#shareBtn').onclick = () => go(`#/j/${job.id}/s/${s.id}/share`);
+  if (!ro) {
+    $('#nextStake').onclick = () => { stakeSt = null; go(`#/j/${job.id}/s/${s.id}/entry`); };
+    $('#newBS').onclick = () => { stakeSt = { sid: s.id, mode: 'bs', active: 'reading', reading: '', dist: '', design: '', point: nextStakeName(s) }; go(`#/j/${job.id}/s/${s.id}/entry`); };
+    $('#finish').onclick = () => { s.closed = true; touch(job, s); go(`#/j/${job.id}/s/${s.id}/share`); };
+  }
+}
+
 // ---------- settings ----------
 async function openSettings() {
   let persisted = null; try { persisted = await navigator.storage?.persisted?.(); } catch (e) {}
   const s = sheet('Settings', `
     <div class="section-label">Theme</div><div class="seg" id="thm"><button data-v="sunlight" aria-pressed="${db.prefs.theme !== 'dusk'}">☀ Sunlight</button><button data-v="dusk" aria-pressed="${db.prefs.theme === 'dusk'}">☾ Dusk</button></div>
+    <div class="section-label">Distances</div>
+    ${distRow(db.prefs.useDist, { id: 'prefDist', note: 'Default for new surveys. Each survey can still switch it.' })}
     <div class="section-label">Peg test</div>
     <label class="field"><span>Collimation tolerance (ft per 100 ft)</span><div class="suffix" data-suffix="ft"><input class="input num" id="pegTol" inputmode="decimal" value="${db.prefs.pegTol}"></div></label>
     <div class="msg" style="font-weight:400;color:var(--muted);margin:-8px 0 8px">Default ${C.PEG_TOL_DEFAULT} ft/100 ft (≈10″). A peg test outside this fails – adjust the level’s reticle.</div>
@@ -944,8 +1187,14 @@ async function openSettings() {
     <label class="listbtn" style="cursor:pointer">⬆ Import backup (JSON)<input type="file" id="imp" accept="application/json,.json" class="sr"></label>
     <button class="listbtn" id="persist">🔒 Keep data on this device ${persisted ? '(granted)' : persisted === false ? '(not granted)' : ''}</button>
     <button class="listbtn" id="sample">＋ Add sample job again</button>
+    <div class="section-label">Field trial</div>
+    <button class="listbtn" id="fbOpen">${I.chat.replace('<svg', '<svg width="22" height="22"')} Send feedback</button>
+    <button class="listbtn" id="wlOpen">ⓘ Show welcome card</button>
     <div class="section-label">About</div>
-    <div class="msg" style="font-weight:400;color:var(--muted);line-height:1.5">Level Book v${R.APP_VERSION} · US survey decimal feet · works offline.<br>${isIOS && !isStandalone() ? 'Install: Safari → Share → Add to Home Screen.<br>' : ''}Data is stored only on this device. Safari can clear data for sites not added to the Home Screen after ~7 days unused – export backups regularly.<br>Storage: ${persisted ? 'persistent' : 'best-effort'} · ${isStandalone() ? 'installed app' : 'browser tab'}</div>`);
+    <div class="msg" style="font-weight:400;color:var(--muted);line-height:1.5">Level Book v${R.APP_VERSION} (field trial) · US survey decimal feet · works offline.<br>${isIOS && !isStandalone() ? 'Install: Safari → Share → Add to Home Screen.<br>' : ''}Data is stored only on this device. Safari can clear data for sites not added to the Home Screen after ~7 days unused – export backups regularly.<br>Storage: ${persisted ? 'persistent' : 'best-effort'} · ${isStandalone() ? 'installed app' : 'browser tab'}</div>`);
+  $('#fbOpen', s.el).onclick = () => { s.close(); openFeedback(); };
+  $('#wlOpen', s.el).onclick = () => { s.close(); welcomeCard(); };
+  $('#prefDist', s.el).onclick = () => { db.prefs.useDist = !db.prefs.useDist; save(); setSwitch($('#prefDist', s.el), db.prefs.useDist); toast(`New surveys: distances ${db.prefs.useDist ? 'ON' : 'OFF'}`); };
   $('#pegTol', s.el).onchange = (e) => { const v = parseFloat(e.target.value); if (v > 0 && v < 1) { db.prefs.pegTol = v; save(); toast(`Peg tolerance ${v} ft/100 ft`); } else { e.target.value = db.prefs.pegTol; toast('Enter a value like 0.005'); } };
   $$('#thm button', s.el).forEach((b) => (b.onclick = () => { db.prefs.theme = b.dataset.v; save(); applyTheme(); $$('#thm button', s.el).forEach((x) => x.setAttribute('aria-pressed', x === b)); }));
   $('#exp', s.el).onclick = () => {
