@@ -22,9 +22,21 @@ Android: open the link in Chrome → menu → **Install app** / Add to Home scre
 - Single-wire and three-wire reading methods
 - Rod graphic, HI/elevation calculations, stadia distance, wire-spread checks
 - Level book table, closure and adjustments, share as PDF / text / CSV
+- **Peg Test (v1.1.0):** two-peg collimation check from the main menu; each loop/run can apply the latest peg test (Peg correction switch, can be turned off)
+
+## Peg test & peg correction
+
+- Setup 1 midway between pegs A and B (equal sights): read a1, b1. Setup 2 near peg A (default 10 ft behind A, so the B sight = spacing + 10 ft): read a2, b2.
+- **C = [(a2 − b2) − (a1 − b1)] ÷ (dA − dB)**, shown in ft per 100 ft. C > 0 means the line of sight is inclined up and readings are too high.
+- Pass/fail against a tolerance in Settings (default 0.005 ft per 100 ft, about 10″).
+- **Corrected reading = reading − C × sight distance** on every BS/FS/IFS that has a distance (three-wire uses the stadia distance). Single-wire readings with no distance are used as read and marked "no dist".
+- Turn it on or off on the setup screen, from the book's PEG button, or on the closure screen. Each book keeps a copy of the peg test it used ("Use latest peg test" swaps in a newer one). Raw readings are never changed.
+- Reports state whether peg correction was applied, the C value and test date, and include the peg test record.
 
 ## Data
 
-Stored in `localStorage` (key `levelbook.v1`) on the device only. Settings → Export backup (JSON) / Import backup.
+Stored in `localStorage` (key `levelbook.v1`) on the device only. Settings → Export backup (JSON) / Import backup. Peg tests are included in backups.
 
-Service worker cache name is `levelbook-v1.0.3` (bump it when assets change).
+Unit tests: `node --test test.mjs`.
+
+Service worker cache name is `levelbook-v1.1.0` (bump it when assets change).
