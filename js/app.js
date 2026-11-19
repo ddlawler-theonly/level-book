@@ -4,6 +4,7 @@ import { RodView } from './rod.js';
 import * as R from './report.js';
 import * as P from './plan.js';
 import * as E from './ent.js';
+import * as PS from './pipe.js';
 
 // ---------- native bridge (Capacitor iOS build injects window.LBNative; absent in the browser/PWA) ----------
 const N = () => (window.LBNative && window.LBNative.isNative ? window.LBNative : null);
@@ -55,6 +56,7 @@ const I = {
   stake: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 34h32"/><path d="M20 36V10"/><path d="M20 10l10 4-10 4"/><path d="M8 26h24" stroke-dasharray="3 3"/></svg>',
   map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/><circle cx="12" cy="10" r="0.6" fill="currentColor"/></svg>',
   peg: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 34h34"/><path d="M8 34V14M32 34V10"/><path d="M6 14h4M6 19h4M6 24h4M30 10h4M30 15h4M30 20h4"/><path d="M14 22l4-6 4 6M18 16v-3"/><path d="M13 13h21" stroke-dasharray="2 3"/></svg>',
+  pipe: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l32 12"/><path d="M4 20l32 12"/><path d="M4 12v8M36 24v8"/><path d="M24 8h10M34 8v6" stroke-dasharray="2 3"/></svg>',
   level: '<svg viewBox="0 0 96 96" width="96" height="96" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><rect x="62" y="10" width="14" height="76" rx="2"/><path d="M62 22h7M62 34h7M62 46h7M62 58h7M62 70h7"/><path d="M16 40h30l-4 10H20z"/><path d="M31 50v12M22 86l9-24 9 24"/><path d="M46 44h12" stroke-dasharray="3 4"/></svg>',
 };
 const topbar = ({ back, title, right = '', wordmark }) => `<header class="topbar">${back ? `<button class="back" data-back="${esc(back.href)}">‹ ${esc(back.label)}</button>` : ''}${wordmark ? `<span class="wordmark" aria-label="BlueWorks Level Book"><small>BLUEWORKS</small>LEVEL BOOK</span><span class="vertag">v${R.APP_VERSION}</span>${trialChip()}<span class="spacer"></span>` : `<span class="title">${esc(title || '')}</span>`}${right}</header>`;
@@ -145,6 +147,7 @@ function screenName() {
   if (!h.length) return 'Jobs';
   if (h[0] !== 'j') return h.join('/');
   if (!h[2]) return 'Main menu';
+  if (h[2] === 'pipe') return 'Pipe slope';
   if (h[2] === 'peg') return 'Peg test' + (h[3] ? ' · ' + (h[3] === 'new' ? 'setup' : h[3] === 'entry' ? 'entry' : 'result') : 's');
   if (h[2] === 's') { const v = (h[4] || 'book').split('?')[0]; return ({ entry: 'Entry', book: 'Book', close: 'Closure', share: 'Share' })[v] || v; }
   return h[2];
@@ -342,6 +345,7 @@ function renderScreen() {
       if (h.length === 2) return menuScreen(job);
       if (h[2] === 'new') return setupScreen(job, h[3]);
       if (h[2] === 'share') return shareScreen(job, null);
+      if (h[2] === 'pipe') return pipeScreen(job);
       if (h[2] === 'peg') {
         if (!h[3]) return pegListScreen(job);
         if (h[3] === 'new') return pegSetupScreen(job);
@@ -539,7 +543,7 @@ function menuScreen(job) {
     <div class="scroll">
       ${ro ? `<div class="banner"><span><b>Archived</b> · read-only</span><button class="btn blue" id="restore">RESTORE</button></div>` : ''}
       <div class="section-label">${esc(R.usDate(job.date))} · ${esc(job.description || '')}</div>
-      ${[['loop', 'Level Loop', 'Start and close on the same benchmark'], ['run', 'Level Run', 'Carry elevation from one BM to another'], ['site', 'Site Levels', 'One setup, many side shots'], ['stake', 'Stake Out', 'Backsight a BM, set grade stakes – cut/fill'], ['peg', 'Peg Test', pegMenuLine()]].map(([t, n, d]) => `<button class="modecard${['loop', 'stake', 'peg'].includes(t) && !PRO() ? ' locked' : ''}" data-mode="${t}" ${ro && t !== 'peg' ? 'disabled' : ''}>${I[t]}<div><div class="mt">${n}${['loop', 'stake', 'peg'].includes(t) ? lockIf() : ''}</div><div class="md">${d}</div></div></button>`).join('')}
+      ${[['loop', 'Level Loop', 'Start and close on the same benchmark'], ['run', 'Level Run', 'Carry elevation to a BM or a set point'], ['site', 'Site Levels', 'One setup, many side shots'], ['stake', 'Stake Out', 'Backsight a BM, set grade stakes – cut/fill'], ['peg', 'Peg Test', pegMenuLine()], ['pipe', 'Pipe Slope', 'Flow line elevations from length and slope %']].map(([t, n, d]) => `<button class="modecard${['loop', 'stake', 'peg'].includes(t) && !PRO() ? ' locked' : ''}" data-mode="${t}" ${ro && t !== 'peg' && t !== 'pipe' ? 'disabled' : ''}>${I[t]}<div><div class="mt">${n}${['loop', 'stake', 'peg'].includes(t) ? lockIf() : ''}</div><div class="md">${d}</div></div></button>`).join('')}
       ${planSection(job)}
       <div class="section-label">Recent</div>
       ${surveys.length ? `<div class="recent">${surveys.map((s) => `<button data-sid="${s.id}"><span class="rn">${esc(s.name)}</span><span class="tag">${SHORT[s.type].toUpperCase()}</span>${s.method === 'three' && s.type !== 'site' ? '<span class="tag blue">3-WIRE</span>' : ''}${proLocked(s) ? '<span class="tag">READ-ONLY</span>' : ''}${statusChip(s)}</button>`).join('')}</div>` : '<div class="empty" style="padding:24px">No surveys in this job yet. Pick a mode above.</div>'}
@@ -548,7 +552,7 @@ function menuScreen(job) {
     <div class="pinned"><div class="row2"><button class="btn" id="shareJob">${I.share.replace('<svg', '<svg width="20" height="20"')} SHARE JOB${lockIf()}</button><button class="btn" id="editJob">EDIT JOB</button></div></div></div>`;
   bindCommon(root);
   $('#restore') && ($('#restore').onclick = () => { job.archived = false; touch(job); render(); });
-  $$('.modecard').forEach((b) => (b.onclick = () => { if ((b.dataset.mode === 'loop' || b.dataset.mode === 'stake') && !guard(TYPE[b.dataset.mode])) return; b.classList.add('flash'); setTimeout(() => go(b.dataset.mode === 'peg' ? `#/j/${job.id}/peg` : `#/j/${job.id}/new/${b.dataset.mode}`), 120); }));
+  $$('.modecard').forEach((b) => (b.onclick = () => { if ((b.dataset.mode === 'loop' || b.dataset.mode === 'stake') && !guard(TYPE[b.dataset.mode])) return; b.classList.add('flash'); setTimeout(() => go(b.dataset.mode === 'peg' ? `#/j/${job.id}/peg` : b.dataset.mode === 'pipe' ? `#/j/${job.id}/pipe` : `#/j/${job.id}/new/${b.dataset.mode}`), 120); }));
   $$('.recent button').forEach((b) => (b.onclick = () => go(`#/j/${job.id}/s/${b.dataset.sid}/book`)));
   $('#shareJob').onclick = () => guard('PDF reports & sharing') && go(`#/j/${job.id}/share`);
   $('#impSurvey') && ($('#impSurvey').onclick = () => importReport(job));
@@ -557,7 +561,7 @@ function menuScreen(job) {
 }
 function statusChip(s) {
   const st = C.surveyStatus(s);
-  if (st === 'closed') { const cl = s.type === 'site' || s.type === 'stake' ? null : C.closure(s); return `<span class="chip closed">✔ ${cl ? Math.abs(cl.misclosure).toFixed(3) : 'done'}</span>`; }
+  if (st === 'closed') { const cl = s.type === 'site' || s.type === 'stake' ? null : C.closure(s); return `<span class="chip closed">✔ ${cl && cl.open ? `${esc(cl.setPoint)} ${C.f3(cl.setElev)}` : cl ? Math.abs(cl.misclosure).toFixed(3) : 'done'}</span>`; }
   if (st === 'check') return `<span class="chip check">⚠ ${Math.abs(C.closure(s).misclosure).toFixed(3)}</span>`;
   return '<span class="chip open">OPEN</span>';
 }
@@ -584,7 +588,7 @@ function setupScreen(job, type) {
         <div id="threeOpts" hidden style="margin-top:16px"><label class="field"><span>Stadia constant K</span><input class="input num" id="sk" inputmode="decimal" value="100"></label>
         <label class="field"><span>Wire spread tolerance</span><div class="suffix" data-suffix="ft"><input class="input num" id="stol" inputmode="decimal" value="0.003"></div></label></div>`)}
       ${sec('Starting benchmark', `<label class="field"><span>BM name</span><input class="input" id="bmn" value="BM-1" autocomplete="off"></label><label class="field"><span>Elevation</span>${elevInput('bme')}</label>`)}
-      ${type === 'run' ? sec('Closing benchmark', `<label class="field"><span>BM name</span><input class="input" id="cbn" placeholder="e.g. BM-7" autocomplete="off"></label><label class="field"><span>Known elevation</span>${elevInput('cbe')}</label>`) : ''}
+      ${type === 'run' ? sec('Closing benchmark (optional)', `<div class="msg" id="cbNote" style="color:var(--muted);font-weight:400;margin-bottom:8px">Leave blank to end on a set point – its elevation is the result (open run, no closing check). Enter a BM and its known elevation to check misclosure.</div><label class="field"><span>BM name</span><input class="input" id="cbn" placeholder="e.g. BM-7 (optional)" autocomplete="off"></label><label class="field"><span>Known elevation</span>${elevInput('cbe')}</label><div class="msg warn" id="cbErr" hidden>Add the BM name for this elevation, or clear the elevation.</div>`) : ''}
       ${type === 'loop' ? sec('Closing benchmark', `<div class="msg" style="color:var(--muted)">A loop closes back on the starting benchmark.</div>`) : ''}
       ${sec('Distances', distRow(db.prefs.useDist, { id: 'setupDist', note: 'Default for this survey; you can switch it on the entry screen. OFF: no DIST field, no peg correction, no balance/sight checks, closure by setups.' }))}
       ${type === 'site' ? '' : sec(`Peg correction ${lockIf()}`, pegSetupBlock())}
@@ -614,8 +618,11 @@ function setupScreen(job, type) {
   const stdLabel = (x) => (x.k ? `${x.label} · ${x.k} ft√mi` : x.label);
   $('#std') && ($('#std').onclick = () => choose('Closure standard', C.STANDARDS.map((x) => ({ v: x.id, label: stdLabel(x) })), st.std, (v) => { st.std = v; const x = C.STANDARDS.find((y) => y.id === v); $('#stdv').textContent = stdLabel(x); $('#customRow').hidden = v !== 'custom'; }));
   $('#rodl').onclick = () => choose('Rod length', [13, 14, 16, 25].map((v) => ({ v: String(v), label: `${v} ft` })), String(st.rod), (v) => { st.rod = Number(v); $('#rodlv').textContent = `${v} ft`; });
-  const valid = () => $('#sn').value.trim() && isFinite(parseFloat($('#bme').value)) && (type !== 'run' || ($('#cbn').value.trim() && isFinite(parseFloat($('#cbe').value))));
-  const upd = () => ($('#start').disabled = !valid());
+  // Closing BM is optional on a run: blank (or a name with no elevation) = open run ending on a set point.
+  // An elevation needs a name so the run knows which point to close on.
+  const cbOk = () => type !== 'run' || !!$('#cbn').value.trim() || $('#cbe').value.trim() === '';
+  const valid = () => $('#sn').value.trim() && isFinite(parseFloat($('#bme').value)) && cbOk() && (type !== 'run' || $('#cbe').value.trim() === '' || isFinite(parseFloat($('#cbe').value)));
+  const upd = () => { $('#start').disabled = !valid(); if ($('#cbErr')) $('#cbErr').hidden = cbOk(); };
   $$('input', root).forEach((i) => i.addEventListener('input', upd));
   $('#start').onclick = () => {
     if (!valid()) return;
@@ -623,7 +630,7 @@ function setupScreen(job, type) {
       name: $('#sn').value.trim(), observer: $('#obs').value.trim(), rodPerson: $('#rodp').value.trim(), instrument: st.inst,
       method: type === 'site' || type === 'stake' ? 'single' : st.method, stakes: type === 'stake' ? [] : undefined, stadiaK: parseFloat($('#sk')?.value) || 100, spreadTol: parseFloat($('#stol')?.value) || 0.003,
       startBM: { name: ($('#bmn').value.trim() || 'BM-1').toUpperCase(), elev: C.round(parseFloat($('#bme').value), 3) },
-      closeBM: type === 'run' ? { name: $('#cbn').value.trim().toUpperCase(), elev: C.round(parseFloat($('#cbe').value), 3) } : { name: '', elev: null },
+      closeBM: type === 'run' ? { name: $('#cbn').value.trim().toUpperCase(), elev: isFinite(parseFloat($('#cbe').value)) ? C.round(parseFloat($('#cbe').value), 3) : null } : { name: '', elev: null },
       standard: st.std, customK: parseFloat($('#ck')?.value) || 0.05, rodLength: st.rod,
       imbalanceLimit: parseFloat($('#imb').value) || 10, maxSight: parseFloat($('#maxs').value) || 300,
       peg: type !== 'site' && latest ? { on: st.pegOn, test: pegSnap(latest) } : null, useDist: st.useDist,
@@ -754,7 +761,7 @@ function drawEntry(job, s) {
   const p = $('#panel');
   p.innerHTML = `<div class="seg rt" id="rt">${['BS', 'FS', 'IFS'].map((t) => `<button data-v="${t}" aria-pressed="${st.type === t}" ${allowed.includes(t) ? '' : 'disabled style="opacity:.35"'}>${t}</button>`).join('')}</div>
     <div class="ptrow"><input class="input" id="pt" value="${esc(st.point)}" aria-label="Point name" autocomplete="off" autocapitalize="characters" ${st.type === 'BS' && st.editIdx == null ? 'readonly' : ''}></div>
-    ${st.type === 'FS' && st.editIdx == null && closeBM && closeBM.name && s.type !== 'site' && st.point !== closeBM.name ? `<div class="quick"><button id="closeOn">Close on ${esc(closeBM.name)}</button></div>` : ''}
+    ${st.type === 'FS' && st.editIdx == null && closeBM && closeBM.name && s.type !== 'site' && st.point !== closeBM.name ? `<div class="quick"><button id="closeOn">${C.isOpenRun(s) ? 'End on set point' : 'Close on'} ${esc(closeBM.name)}</button></div>` : ''}
     ${st.three ? `${rbox('t', 'TOP', 'w3')}${rbox('m', 'MID', 'w3')}${rbox('b', 'BOT', 'w3')}
       <div class="rescard"><div class="result"><span class="lbl">MEAN </span>${ev.tw ? ev.tw.mean.toFixed(3) : '—'}</div><div class="result${C.usesDist(s) ? '' : ' muted'}"><span class="lbl">DIST </span>${ev.distRec != null && !isNaN(ev.distRec) ? ev.distRec.toFixed(1) + ' ft' : '—'}${C.usesDist(s) ? '' : '<span class="lbl"> (not used)</span>'}</div>${resLine}</div>${distTotalsCard(s, liveDistTotals(s, st, ev))}`
     : `${rbox('reading', 'READING', '')}${C.usesDist(s) ? rbox('dist', 'DIST ft', 'small') : ''}${resLine}`}
@@ -804,7 +811,9 @@ async function confirmEntry(job, s) {
   entry = null;
   if (r.type === 'FS' && s.type !== 'site' && closeBM && r.point === String(closeBM.name).toUpperCase()) {
     render(); await markShot(job, s, r.id);
-    const ok = await confirmDialog({ title: `Closed on ${closeBM.name}`, text: `Foresight on ${closeBM.name} recorded. Close the ${s.type} now and check misclosure?`, ok: 'CLOSE ▶', cancel: 'Keep going' });
+    const open = C.isOpenRun(s);
+    const ok = open ? await confirmDialog({ title: `Set point ${closeBM.name}`, text: `Foresight on ${closeBM.name} recorded – elevation ${C.f3(C.computeSurvey(s).lastElev)} ft. Finish the run on this set point? (Open run, no closing check.)`, ok: 'FINISH ▶', cancel: 'Keep going' })
+      : await confirmDialog({ title: `Closed on ${closeBM.name}`, text: `Foresight on ${closeBM.name} recorded. Close the ${s.type} now and check misclosure?`, ok: 'CLOSE ▶', cancel: 'Keep going' });
     if (ok) { s.closed = true; touch(job, s); return go(`#/j/${job.id}/s/${s.id}/close`); }
     return;
   }
@@ -858,7 +867,7 @@ function bookScreen(job, s) {
     </div>
     <div class="pinned">${ro ? roBar(job, s) : `
       <button class="btn primary block" id="next">＋ NEXT SETUP</button>
-      <div class="row3"><button class="btn" id="side" ${comp.expect === 'FS' ? '' : 'disabled'}>＋ SIDE SHOT</button><button class="btn" id="editRow" ${s.readings.length ? '' : 'disabled'}>EDIT ROW</button><button class="btn blue" id="closeBtn" ${s.readings.length ? '' : 'disabled'}>${s.type === 'site' ? 'FINISH ▶' : `CLOSE ${s.type === 'run' ? 'RUN' : 'LOOP'} ▶`}</button></div>`}</div></div>`;
+      <div class="row3"><button class="btn" id="side" ${comp.expect === 'FS' ? '' : 'disabled'}>＋ SIDE SHOT</button><button class="btn" id="editRow" ${s.readings.length ? '' : 'disabled'}>EDIT ROW</button><button class="btn blue" id="closeBtn" ${s.readings.length ? '' : 'disabled'}>${s.type === 'site' ? 'FINISH ▶' : C.isOpenRun(s) ? 'FINISH RUN ▶' : `CLOSE ${s.type === 'run' ? 'RUN' : 'LOOP'} ▶`}</button></div>`}</div></div>`;
   bindCommon(root);
   $('#shareBtn').onclick = () => guard('PDF reports & sharing') && go(`#/j/${job.id}/s/${s.id}/share`);
   $('#planBtn') && ($('#planBtn').onclick = () => guard('Plan sheet') && openPlan(job, s));
@@ -872,6 +881,7 @@ function bookScreen(job, s) {
     $('#closeBtn').onclick = async () => {
       if (s.type === 'site') { s.closed = true; touch(job, s); if (!PRO()) { toast('Site levels finished'); return bookScreen(job, s); } return go(`#/j/${job.id}/s/${s.id}/share`); }
       const cl = C.closure(s, comp);
+      if (cl.open) return finishOpenRun(job, s, comp, cl);
       if (!cl.closedOn) { await confirmDialog({ title: 'Not closed yet', text: `The last foresight must be on ${cl.bm?.name || 'the closing BM'} to close this ${s.type}. Take an FS on ${cl.bm?.name}, then close.`, ok: 'OK', cancel: 'Back' }); return; }
       s.closed = true; touch(job, s); go(`#/j/${job.id}/s/${s.id}/close`);
     };
@@ -886,10 +896,29 @@ function bookScreen(job, s) {
 }
 const rdTxt = (v, t, w) => (w ? `${v.toFixed(3)} (T ${w.t.toFixed(3)} M ${w.m.toFixed(3)} B ${w.b.toFixed(3)})` : C.fmtReading(v, t));
 
+// Open run (no closing BM elevation): finish on the last foresight = the set point. The user can name it here.
+async function finishOpenRun(job, s, comp, cl) {
+  if (!cl.ended) { await confirmDialog({ title: 'End on a foresight', text: 'An open run ends on a set point. Take a foresight on the point you want to finish on, then tap FINISH RUN.', ok: 'OK', cancel: 'Back' }); return; }
+  const last = s.readings[s.readings.length - 1];
+  const name = await new Promise((res) => {
+    const d = overlay(`<div class="dialog" role="alertdialog" aria-label="Finish run on set point"><h2>Finish on set point</h2><p>Open run – no closing check. The last foresight is the set point; its elevation is the result.</p>
+      <label class="field"><span>Set point name</span><input class="input" id="spName" value="${esc(last.point)}" autocomplete="off" autocapitalize="characters"></label>
+      <div class="kv" style="margin:6px 0 12px"><span class="k">Elevation</span><span class="v mono"><b>${C.f3(cl.setElev)}</b> ft</span></div>
+      <div class="row2"><button class="btn" data-c>Keep going</button><button class="btn primary" data-ok>FINISH ▶</button></div></div>`, { dialog: true, onClose: () => res(null) });
+    const inp = $('#spName', d.el); inp.oninput = () => { inp.value = inp.value.toUpperCase(); };
+    $('[data-c]', d.el).onclick = () => { d.el.remove(); res(null); };
+    $('[data-ok]', d.el).onclick = () => { const v = inp.value.trim().toUpperCase(); d.el.remove(); res(v || last.point); };
+  });
+  if (!name) return;
+  if (name !== last.point) last.point = name;
+  s.closed = true; touch(job, s); go(`#/j/${job.id}/s/${s.id}/close`);
+}
+
 // ---------- 5. Closure ----------
 function closureScreen(job, s) {
   if (s.type === 'site') return go(`#/j/${job.id}/s/${s.id}/book`);
   const comp = C.computeSurvey(s); const cl = C.closure(s, comp); const root = app(); const ro = roFor(job, s);
+  if (cl.open) return openRunScreen(job, s, comp, cl, root, ro);
   const method = s.adjustMethod || 'setups';
   const adj = cl.closedOn ? C.adjust(s, method, comp, cl) : [];
   const verdict = !cl.closedOn ? ['na', 'NOT CLOSED', I.x] : cl.allowable == null ? ['na', 'NO DISTANCE', I.x] : cl.pass ? ['pass', 'PASS', I.ok] : ['fail', 'FAIL', I.x];
@@ -927,6 +956,7 @@ function closureScreen(job, s) {
       ${adj.map((p) => `<tr><td>${esc(p.point)}${p.side ? ' <span class="tag">IFS</span>' : ''}</td><td>${C.f3(p.elev)}</td><td>${sgn(p.correction)}</td><td><b>${C.f3(p.adjusted)}</b></td></tr>`).join('')}</tbody></table>
       <div class="msg" style="color:var(--muted);font-weight:400;margin-top:8px">Correction ${sgn(-cl.misclosure)} ft distributed ${method === 'distance' && !cl.distOff ? 'in proportion to cumulative sight distance' : 'equally per setup'}; the closing BM is held at its known elevation.</div></div>` : ''}
       <button class="btn" style="margin-top:16px;width:100%" id="reopen" ${ro ? 'disabled' : ''}>Reopen ${s.type} to add readings</button>
+      ${s.type === 'run' && s.closeBM && s.closeBM.addedLater && !ro ? `<button class="btn" style="margin-top:8px;width:100%" id="dropKnown">Remove known elevation (back to open run)</button>` : ''}
     </div>
     <div class="pinned"><div class="row2" style="grid-template-columns:2fr 1fr"><button class="btn primary" id="shareRep">${I.share.replace('<svg', '<svg width="22" height="22"')} SHARE REPORT${lockIf()}</button><button class="btn" id="print">PRINT BOOK${lockIf()}</button></div></div></div>`;
   bindCommon(root);
@@ -935,6 +965,57 @@ function closureScreen(job, s) {
   $$('#adjm button').forEach((b) => (b.onclick = () => { s.adjustMethod = b.dataset.v; touch(job, s); closureScreen(job, s); }));
   bindPegSwitch(job, s, () => closureScreen(job, s));
   $('#closeDist') && ($('#closeDist').onclick = () => toggleDist(job, s, () => closureScreen(job, s)));
+  $('#reopen').onclick = () => { s.closed = false; touch(job, s); go(`#/j/${job.id}/s/${s.id}/book`); };
+  $('#dropKnown') && ($('#dropKnown').onclick = () => { s.closeBM = { name: s.closeBM.name, elev: null }; touch(job, s); toast('Known elevation removed – open run'); closureScreen(job, s); });
+  $('#print').onclick = () => { if (!guard('PDF reports')) return; const doc = R.pdfReport(job, [s], includesFor(job), planMapCache.sig === planSig(job, [s]) ? planMapCache.maps : null); openBlob(doc.output('blob'), R.fileBase(job, s) + '.pdf'); };
+}
+
+// Open run result: the set point's elevation, the arithmetic check and distance totals. No misclosure / allowable.
+// A known elevation for the set point can be added here later, which turns the run into a checked (closed) run.
+function openRunScreen(job, s, comp, cl, root, ro) {
+  const bal = Math.abs(comp.imbalance) > s.imbalanceLimit; const three = s.method === 'three';
+  const t = three ? C.distTotals(s, comp) : null;
+  const pin = '<svg viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><path d="M24 44s-13-13.5-13-24a13 13 0 0 1 26 0c0 10.5-13 24-13 24z"/><circle cx="24" cy="20" r="4.5"/></svg>';
+  root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}/s/${s.id}/book`, label: 'Book' }, title: `Result · ${s.name}`, right: `<button class="iconbtn" id="shareBtn" aria-label="Share report">${I.share}</button>` })}
+    <div class="scroll">
+      <div class="big ${cl.ended ? 'openrun' : 'na'}" role="status" id="openRes">${cl.ended ? pin : I.x}<div><div class="bw sm">${cl.ended ? 'SET POINT' : 'NOT FINISHED'}</div>${cl.ended ? `<div class="spe">${esc(cl.setPoint)} · ${C.f3(cl.setElev)} ft</div>` : ''}<div>Open run, no closing check</div></div></div>
+      <div class="section-label">Peg correction</div>
+      <div class="card" style="padding:4px 16px">${pegSwitchRow(s, comp, ro)}</div>
+      <div class="card" style="padding:4px 16px;margin-top:8px">${distRow(!cl.distOff, { id: 'closeDist' })}</div>
+      <div class="section-label">Result</div>
+      <div class="card kv">
+        <span class="k">Started on</span><span class="v">${esc(s.startBM.name)} · ${C.f3(Number(s.startBM.elev))}</span>
+        <span class="k">Ended on (set point)</span><span class="v">${esc(cl.setPoint || '—')}</span>
+        <span class="k">Set point elevation</span><span class="v"><b>${cl.ended ? C.f3(cl.setElev) : '—'}</b></span>
+        <span class="k">Closing check</span><span class="v" style="font-family:var(--sans);font-size:15px">Open run – none</span>
+        <span class="k">Distance</span><span class="v">${cl.distOff ? 'not used' : `${cl.feet} ft · ${cl.miles.toFixed(3)} mi`}</span>
+        <span class="k">Setups</span><span class="v">${cl.setups}</span>
+      </div>
+      <div class="section-label">Checks</div>
+      <div class="card kv">
+        <span class="k">ΣBS − ΣFS</span><span class="v">${sgn(comp.arith.diff)}</span>
+        <span class="k">Last − first elev</span><span class="v">${sgn(comp.arith.delta)}</span>
+        <span class="k">Arithmetic check</span><span class="v" style="color:${comp.arith.ok ? 'var(--pass)' : 'var(--err)'}">${comp.arith.ok ? '✔ PASS' : '✕ FAIL'}</span>
+        ${comp.distUsed && !PRO() ? `<span class="k">Distance balance</span><span class="v">${LOCK}</span>` : comp.distUsed ? `<span class="k">BS / FS distance</span><span class="v">${comp.totalBSdist} / ${comp.totalFSdist}</span>
+        <span class="k">Distance balance</span><span class="v" style="color:${bal ? 'var(--warn)' : 'inherit'}">${comp.imbalance > 0 ? '+' : ''}${comp.imbalance} ft${bal ? ' ⚠' : ' ✔'}</span>` : '<span class="k">Distances</span><span class="v" style="font-family:var(--sans)">not used</span>'}
+        ${t ? `<span class="k">3-wire ΣBS / ΣFS</span><span class="v">${t.cumBS.toFixed(1)} / ${t.cumFS.toFixed(1)}</span><span class="k">3-wire bal · total</span><span class="v">${t.bal > 0 ? '+' : ''}${t.bal.toFixed(1)} · ${t.total.toFixed(1)} ft</span>` : ''}
+      </div>
+      ${cl.ended && !ro ? `<div class="section-label">Known elevation (optional)</div>
+      <div class="card"><div class="msg" style="color:var(--muted);font-weight:400;margin-bottom:8px">If ${esc(cl.setPoint)} turns out to be a benchmark with a known elevation, enter it to check misclosure and adjust the run.</div>
+        <label class="field"><span>Known elevation of ${esc(cl.setPoint)}</span><div class="suffix" data-suffix="ft"><input class="input num" id="knownElev" inputmode="decimal" autocomplete="off" placeholder="0.000"></div></label>
+        <button class="btn block" id="addKnown" disabled>CHECK CLOSURE ▶</button></div>` : ''}
+      <button class="btn" style="margin-top:16px;width:100%" id="reopen" ${ro ? 'disabled' : ''}>Reopen run to add readings</button>
+    </div>
+    <div class="pinned"><div class="row2" style="grid-template-columns:2fr 1fr"><button class="btn primary" id="shareRep">${I.share.replace('<svg', '<svg width="22" height="22"')} SHARE REPORT${lockIf()}</button><button class="btn" id="print">PRINT BOOK${lockIf()}</button></div></div></div>`;
+  bindCommon(root);
+  $('#shareBtn').onclick = $('#shareRep').onclick = () => guard('PDF reports & sharing') && go(`#/j/${job.id}/s/${s.id}/share`);
+  bindPegSwitch(job, s, () => closureScreen(job, s));
+  $('#closeDist') && ($('#closeDist').onclick = () => toggleDist(job, s, () => closureScreen(job, s)));
+  const ke = $('#knownElev');
+  if (ke) {
+    ke.oninput = () => ($('#addKnown').disabled = !isFinite(parseFloat(ke.value)));
+    $('#addKnown').onclick = () => { const v = parseFloat(ke.value); if (!isFinite(v)) return; s.closeBM = { name: cl.setPoint, elev: C.round(v, 3), addedLater: true }; touch(job, s); toast(`Closing on ${cl.setPoint} ${C.f3(v)} – closure checked`); closureScreen(job, s); };
+  }
   $('#reopen').onclick = () => { s.closed = false; touch(job, s); go(`#/j/${job.id}/s/${s.id}/book`); };
   $('#print').onclick = () => { if (!guard('PDF reports')) return; const doc = R.pdfReport(job, [s], includesFor(job), planMapCache.sig === planSig(job, [s]) ? planMapCache.maps : null); openBlob(doc.output('blob'), R.fileBase(job, s) + '.pdf'); };
 }
@@ -1029,6 +1110,61 @@ function downloadBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 60000); toast(`Saved ${name}`);
 }
 function openBlob(blob, name) { if (N()) return downloadBlob(blob, name); const url = URL.createObjectURL(blob); const w = window.open(url, '_blank'); if (!w) downloadBlob(blob, name); setTimeout(() => URL.revokeObjectURL(url), 120000); }
+
+// ---------- Pipe Slope Calculator (tool; free; inputs kept in db.pipe, works offline) ----------
+// Start flow line elevation, then consecutive sections (length ft, slope %, Drop/Rise). Each end is the next start.
+const pipeState = () => { if (!db.pipe || !Array.isArray(db.pipe.sections) || !db.pipe.sections.length) db.pipe = PS.pipeDefault(); return db.pipe; };
+function pipeScreen(job) {
+  const st = pipeState(); const root = app();
+  const sec = (x, i) => `<div class="card pipesec" data-i="${i}">
+      <div class="pshead"><b>SECTION ${i + 1}</b>${st.sections.length > 1 ? `<button class="iconbtn psdel" data-del="${i}" aria-label="Remove section ${i + 1}">✕</button>` : ''}</div>
+      <div class="psgrid"><label class="field"><span>Length</span><div class="suffix" data-suffix="ft"><input class="input num" data-f="len" data-i="${i}" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${esc(x.len)}" aria-label="Section ${i + 1} length"></div></label>
+      <label class="field"><span>Slope</span><div class="suffix" data-suffix="%"><input class="input num" data-f="slope" data-i="${i}" inputmode="decimal" autocomplete="off" placeholder="0.00" value="${esc(x.slope)}" aria-label="Section ${i + 1} slope"></div></label></div>
+      <div class="seg psdir" data-i="${i}"><button data-v="down" aria-pressed="${x.dir !== 'up'}">↘ Drop (downhill)</button><button data-v="up" aria-pressed="${x.dir === 'up'}">↗ Rise (uphill)</button></div>
+      <div class="psmsg" id="psm${i}"></div><div class="psres mono" id="psr${i}"></div></div>`;
+  root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}`, label: 'Job' }, title: 'Pipe Slope', right: sysIcons() })}
+    <div class="scroll" id="pipeScroll">
+      <div class="msg" style="font-weight:400;color:var(--muted);margin:8px 4px">Change = slope % ÷ 100 × length. Drop goes down, Rise goes up. Each section starts where the last one ends. Shared by all jobs.</div>
+      <div class="section-label">Start</div>
+      <div class="card"><label class="field"><span>Starting flow line elevation</span><div class="suffix" data-suffix="ft"><input class="input num" id="psStart" inputmode="decimal" autocomplete="off" placeholder="0.000" value="${esc(st.start)}"></div></label><div class="psmsg" id="psmS"></div></div>
+      <div class="section-label">Sections</div>
+      ${st.sections.map(sec).join('')}
+      <button class="btn block" id="psAdd" style="margin-top:8px">＋&nbsp; ADD SECTION</button>
+      <div class="section-label">Results</div>
+      <div class="card" style="padding:8px 12px" id="psOut"></div>
+      <div class="row2" style="margin-top:12px"><button class="btn" id="psText">TEXT</button><button class="btn" id="psCsv">CSV</button></div>
+      <button class="btn" style="margin-top:8px;width:100%" id="psClear">Clear all</button>
+    </div></div>`;
+  bindCommon(root);
+  const upd = () => {
+    const res = PS.pipeCalc(st);
+    const m = $('#psmS'); m.innerHTML = res.startErr && !PS.blank(st.start) ? `<div class="msg err">✕ ${esc(res.startErr)}</div>` : '';
+    res.rows.forEach((r, i) => {
+      const x = st.sections[i]; const touched = !PS.blank(x.len) || !PS.blank(x.slope);
+      $(`#psm${i}`).innerHTML = (touched ? r.errors.map((e) => `<div class="msg err">✕ ${esc(e)}</div>`).join('') : '') + r.warns.map((w) => `<div class="msg warn">⚠ ${esc(w)}</div>`).join('');
+      $(`#psr${i}`).innerHTML = r.hidden ? '<span class="ph">–</span>' : `${PS.f3(r.start)} → <b>${PS.f3(r.end)}</b> ft · ${PS.dirWord(r).toLowerCase()} ${PS.f3(r.mag)}`;
+    });
+    const rows = PS.tableRows(res);
+    $('#psOut').innerHTML = rows.length ? `<table class="adj pstable"><thead><tr><th>#</th><th>START</th><th>LEN</th><th>SLOPE%</th><th>DROP/RISE</th><th>END</th></tr></thead><tbody>
+        ${rows.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td class="${r[4].startsWith('RISE') ? 'rise' : 'drop'}">${r[4].replace('DROP ', '↓').replace('RISE ', '↑')}</td><td><b>${r[5]}</b></td></tr>`).join('')}</tbody></table>
+      <div class="kv" style="margin-top:8px" id="psTot"><span class="k">Total length</span><span class="v">${res.totalLen.toFixed(2)} ft</span><span class="k">Total change</span><span class="v">${esc(PS.changeText(res.totalChange))}</span><span class="k">End flow line</span><span class="v">${PS.f3(res.end)} ft</span></div>
+      ${res.allOk ? '' : `<div class="msg warn" style="margin-top:6px">Totals through section ${res.validCount} – fix section ${res.validCount + 1} to continue.</div>`}`
+      : `<div class="empty" style="padding:16px">${res.startErr ? 'Enter the starting elevation' : 'Enter a length and slope'} to see results.</div>`;
+    $('#psText').disabled = $('#psCsv').disabled = !rows.length;
+    return res;
+  };
+  const persist = () => save();
+  $('#psStart').oninput = (e) => { st.start = e.target.value; persist(); upd(); };
+  $$('input[data-f]', root).forEach((inp) => (inp.oninput = () => { st.sections[Number(inp.dataset.i)][inp.dataset.f] = inp.value; persist(); upd(); }));
+  $$('.psdir', root).forEach((g) => $$('button', g).forEach((b) => (b.onclick = () => { st.sections[Number(g.dataset.i)].dir = b.dataset.v; $$('button', g).forEach((x) => x.setAttribute('aria-pressed', x === b)); persist(); upd(); })));
+  $$('.psdel', root).forEach((b) => (b.onclick = () => { st.sections.splice(Number(b.dataset.del), 1); persist(); pipeScreen(job); }));
+  $('#psAdd').onclick = () => { const last = st.sections[st.sections.length - 1]; st.sections.push({ len: '', slope: last ? last.slope : '', dir: last ? last.dir : 'down' }); persist(); pipeScreen(job); const ins = $$('input[data-f="len"]'); const el = ins[ins.length - 1]; el.scrollIntoView({ block: 'center' }); el.focus(); };
+  $('#psClear').onclick = async () => { if (await confirmDialog({ title: 'Clear pipe slope?', text: 'Remove the start elevation and all sections?', ok: 'Clear', danger: true })) { db.pipe = PS.pipeDefault(); save(); pipeScreen(job); } };
+  const name = () => `BlueWorks-LevelBook_Pipe-Slope_${todayISO().replace(/-/g, '')}`;
+  $('#psText').onclick = () => { const res = upd(); const text = PS.pipeText(res); if (N()) return N().shareText({ title: 'Pipe slope', text }).catch(() => {}); shareFallback('BlueWorks Level Book – Pipe slope', text, { blob: new Blob([text], { type: 'text/plain' }), name: name() + '.txt', type: 'text/plain' }); };
+  $('#psCsv').onclick = () => { const res = upd(); downloadBlob(new Blob([PS.pipeCSV(res)], { type: 'text/csv' }), name() + '.csv'); };
+  upd();
+}
 
 // ---------- Peg test (two-peg collimation check) ----------
 const pegEval = (t) => C.pegTest(t, db.prefs.pegTol || C.PEG_TOL_DEFAULT);

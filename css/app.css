@@ -199,7 +199,8 @@ table.book .tw b{font-size:17px}
 .hint{background:var(--yellow);color:#111;font-weight:700;padding:8px 16px;text-align:center}
 /* Closure */
 .big{border-radius:12px;padding:16px;display:flex;align-items:center;gap:16px;color:#fff;margin:8px 0}
-.big.pass{background:var(--pass)}.big.fail{background:var(--err)}.big.na{background:var(--muted)}
+.big.pass{background:var(--pass)}.big.fail{background:var(--err)}.big.na{background:var(--muted)}.big.openrun{background:#0B5FA5}
+.big .bw.sm{font-size:30px}.big .spe{font-family:var(--mono);font-size:22px;font-weight:800}
 .big .bw{font-size:40px;font-weight:900;letter-spacing:.04em}
 .big svg{width:48px;height:48px}
 .kv{display:grid;grid-template-columns:1fr auto;gap:6px 12px;font-size:17px}
@@ -360,3 +361,15 @@ table.kv td:first-child{color:var(--muted);width:38%}
 .dtot .dt.wn .v{color:var(--warn)}
 .dtot.muted .dt .v{color:var(--muted)}
 .improw .btn{white-space:nowrap}
+
+/* Pipe slope calculator */
+.pipesec{margin-top:8px}
+.pshead{display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;letter-spacing:.06em;font-size:14px;color:var(--muted)}
+.pshead b{color:var(--text)}
+.psgrid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+.psdir{min-height:48px}.psdir button{font-size:15px}
+.psdir button[aria-pressed="true"]{background:var(--blue);color:#fff}
+.psres{margin-top:8px;font-size:15px}.psres .ph{color:var(--muted)}
+.psmsg .msg{margin-top:6px}
+table.pstable{font-size:13px}table.pstable th{font-size:10.5px;padding:6px 2px}table.pstable td{padding:7px 2px}
+table.pstable td.rise{color:var(--pass)}table.pstable td.drop{color:var(--blue)}

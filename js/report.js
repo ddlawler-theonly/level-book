@@ -16,7 +16,7 @@ export function surveyModel(job, s) {
   const comp = C.computeSurvey(s);
   const isSite = s.type === 'site' || s.type === 'stake';
   const cl = isSite ? null : C.closure(s, comp);
-  const closed = !!s.closed && (isSite || cl.closedOn);
+  const closed = !!s.closed && (isSite || cl.closedOn || (cl.open && cl.ended)); // open run: finished on its set point
   const adj = !isSite && closed && cl.closedOn ? C.adjust(s, s.adjustMethod || 'setups', comp, cl) : null;
   const std = C.STANDARDS.find((x) => x.id === s.standard) || C.STANDARDS[0];
   const pegT = s.peg?.test || null; const peg = pegT ? C.pegTest(pegT, pegT.tol || C.PEG_TOL_DEFAULT) : null;
@@ -128,8 +128,13 @@ function checksLines(m) {
   if (three) { const t = C.distTotals(s, comp); L.push(['Three-wire checks failed', String(comp.failedChecks)]); L.push(['3-wire dist totals', `Sum BS ${t.cumBS.toFixed(1)} / Sum FS ${t.cumFS.toFixed(1)} ft · balance ${signed1(t.bal)} · total ${t.total.toFixed(1)} ft${comp.distUsed ? '' : ' (not used)'}`]); }
   if (!isSite) L.push(['Peg correction', pegStatus(m)]);
   if (!isSite) {
-    L.push(['Closed on', cl.closedOn ? `${cl.bm.name}` : 'NOT CLOSED']);
-    if (cl.closedOn) {
+    if (cl.open) {
+      L.push(['Run type', 'Open run – no closing check (no closing BM elevation)']);
+      L.push(['Set point', cl.ended ? cl.setPoint : 'not reached yet (last reading is not a foresight)']);
+      if (cl.ended) L.push(['Set point elevation', `${C.f3(cl.setElev)} ft`]);
+      L.push(['Distance / setups', `${cl.feet} ft (${cl.miles.toFixed(3)} mi) / ${cl.setups}`]);
+    } else L.push(['Closed on', cl.closedOn ? `${cl.bm.name}` : 'NOT CLOSED']);
+    if (!cl.open && cl.closedOn) {
       L.push(['Known / computed elev', `${C.f3(cl.known)} / ${C.f3(cl.computed)}`]);
       L.push(['Misclosure', `${sgn(cl.misclosure)} ft`]);
       L.push(['Distance / setups', `${cl.feet} ft (${cl.miles.toFixed(3)} mi) / ${cl.setups}`]);
@@ -149,7 +154,7 @@ function headerLines(m) {
     ['Observer / rod', `${s.observer || '—'} / ${s.rodPerson || '—'}`], ['Instrument', s.instrument || '—'], ['Units', 'US survey decimal feet'],
     ...(s.type === 'site' ? [] : [['Peg correction', pegStatus(m)]]),
     ['Distances', distStatus(m)],
-    ['Benchmarks', `Start ${s.startBM.name} ${C.f3(Number(s.startBM.elev))}` + (s.type === 'run' ? `; close ${s.closeBM.name} ${C.f3(Number(s.closeBM.elev))}` : s.type === 'loop' ? `; close on ${s.startBM.name}` : '')],
+    ['Benchmarks', `Start ${s.startBM.name} ${C.f3(Number(s.startBM.elev))}` + (s.type === 'run' ? (C.isOpenRun(s) ? `; open run – ends on set point ${m.cl && m.cl.ended ? `${m.cl.setPoint} (${C.f3(m.cl.setElev)})` : s.closeBM?.name || '(not reached)'}, no closing BM` : `; close ${s.closeBM.name} ${C.f3(Number(s.closeBM.elev))}`) : s.type === 'loop' ? `; close on ${s.startBM.name}` : '')],
   ];
 }
 
@@ -163,7 +168,7 @@ export function textReport(job, surveys) {
     out.push(`BLUEWORKS LEVEL BOOK – ${job.name}`);
     out.push(`${usDate(job.date)} · ${job.description || ''}`.trim());
     out.push(`${s.name} · ${TYPE[s.type]} · ${m.three ? '3-wire' : 'single wire'}`);
-    if (!m.closed) out.push('*** IN PROGRESS – NOT CLOSED ***');
+    if (!m.closed) out.push(m.cl && m.cl.open ? '*** IN PROGRESS – OPEN RUN, NOT FINISHED ***' : '*** IN PROGRESS – NOT CLOSED ***');
     out.push(`Start ${s.startBM.name} ${C.f3(Number(s.startBM.elev))}`);
     if (!m.isSite) out.push(m.pegOn ? `Peg corr ON: C ${C.pegLabel(m.comp.peg.per100)} ft/100ft (test ${usDate(m.pegT.date)}, ${m.pegT.instrument || '—'}) · ${m.comp.peg.applied} corr, ${m.comp.peg.skipped} no dist` : `Peg corr OFF${m.pegT ? ` (test ${usDate(m.pegT.date)} on file)` : ''}`);
     out.push(`Distances: ${m.comp.distUsed ? 'used' : 'not used'}`);
@@ -176,6 +181,10 @@ export function textReport(job, surveys) {
     }
     out.push(`ΣBS ${m.comp.sumBS.toFixed(3)}  ΣFS ${m.comp.sumFS.toFixed(3)}  Arith ${m.comp.arith.ok ? 'PASS ✔' : 'FAIL ✕'}`);
     if (m.three) { const t = C.distTotals(s, m.comp); out.push(`3-wire dist ΣBS ${t.cumBS.toFixed(1)}  ΣFS ${t.cumFS.toFixed(1)}  bal ${signed1(t.bal)}  total ${t.total.toFixed(1)} ft${m.comp.distUsed ? '' : ' (not used)'}`); }
+    if (m.cl && m.cl.open) {
+      out.push('Open run – no closing check');
+      if (m.cl.ended) out.push(`Set point ${m.cl.setPoint}: elev ${C.f3(m.cl.setElev)} ft (${m.cl.feet} ft, ${m.cl.setups} setups)`);
+    }
     if (m.cl && m.cl.closedOn) {
       out.push(`Closed on ${m.cl.bm.name}: misclose ${sgn(m.cl.misclosure)} ft`);
       out.push(`Allow ${m.cl.allowable == null ? 'n/a' : m.cl.allowable.toFixed(3)} ft (${m.cl.feet} ft) → ${m.cl.allowable == null ? 'NO DIST' : m.cl.pass ? 'PASS ✔' : 'FAIL ✕'}`);
@@ -185,7 +194,7 @@ export function textReport(job, surveys) {
       m.adj.slice(1).forEach((p) => out.push(`${pad(p.point + (p.side ? '*' : ''), 10)}${pad(p.adjusted.toFixed(3), 9, true)}`));
       if (m.adj.some((p) => p.side)) out.push('* side shot');
     } else {
-      out.push('ELEVATIONS (unadjusted)');
+      out.push(m.cl && m.cl.open ? 'ELEVATIONS (open run – unadjusted)' : 'ELEVATIONS (unadjusted)');
       m.comp.pointElev.slice(1).forEach((p) => out.push(`${pad(p.point + (p.side ? '*' : ''), 10)}${pad(p.elev.toFixed(3), 9, true)}`));
     }
   });
@@ -208,7 +217,7 @@ export function csvReport(job, surveys) {
       const inf = m.comp.info[i]; const v = inf.raw; const d = inf.d;
       const tw = r.wires ? C.threeWire(r.wires, s.stadiaK, s.spreadTol) : null;
       lines.push([s.name, TYPE[s.type], m.three ? '3-wire' : 'single', i + 1, inf.setup, r.type, r.point, C.fmtReading(v, r.wires ? null : r.text), r.wires ? r.wires.t.toFixed(3) : '', r.wires ? r.wires.m.toFixed(3) : '', r.wires ? r.wires.b.toFixed(3) : '', inf.dRec == null ? '' : m.comp.distUsed ? inf.dRec : `${inf.dRec} (not used)`,
-        inf.corr != null ? inf.corr.toFixed(3) : m.pegOn && inf.noDist ? 'no dist' : '', m.pegOn ? inf.v.toFixed(3) : '', r.type === 'BS' ? C.f3(inf.hi) : '', inf.elev == null ? '' : C.f3(inf.elev), adjBy[i] != null ? C.f3(adjBy[i]) : '', tw ? (tw.orderOk && tw.spreadOk ? 'PASS' : 'FAIL') + ` d${tw.spreadDiff.toFixed(3)}` : '', (m.comp.warnings[i] || []).join('; '), m.closed ? 'CLOSED' : 'IN PROGRESS'],);
+        inf.corr != null ? inf.corr.toFixed(3) : m.pegOn && inf.noDist ? 'no dist' : '', m.pegOn ? inf.v.toFixed(3) : '', r.type === 'BS' ? C.f3(inf.hi) : '', inf.elev == null ? '' : C.f3(inf.elev), adjBy[i] != null ? C.f3(adjBy[i]) : '', tw ? (tw.orderOk && tw.spreadOk ? 'PASS' : 'FAIL') + ` d${tw.spreadDiff.toFixed(3)}` : '', (m.comp.warnings[i] || []).join('; '), m.cl && m.cl.open ? (m.closed ? 'OPEN RUN – SET POINT' : 'IN PROGRESS – OPEN RUN') : m.closed ? 'CLOSED' : 'IN PROGRESS'],);
     });
   });
   if (stakeOut.length) lines.push([], ['Survey', 'Stake #', 'Setup', 'Point', 'HI', 'Design', 'Target rod', 'Actual rod', 'Dist ft', 'Peg corr', 'Ground', 'Cut/Fill', 'Amount ft', 'Notes'], ...stakeOut);
@@ -231,7 +240,8 @@ export function pdfReport(job, surveys, inc, planMaps) {
     let y = M;
     doc.setFont('helvetica', 'bold'); doc.setFontSize(15); doc.text(winAnsi(`BLUEWORKS LEVEL BOOK – ${job.name}`), M, y); y += 8;
     doc.setDrawColor(255, 196, 0); doc.setLineWidth(3); doc.line(M, y, W - M, y); y += 14;
-    if (!m.closed) { doc.setTextColor(197, 34, 31); doc.setFontSize(11); doc.text('IN PROGRESS – NOT CLOSED', M, y); doc.setTextColor(0); y += 14; }
+    if (!m.closed) { doc.setTextColor(197, 34, 31); doc.setFontSize(11); doc.text(m.cl && m.cl.open ? 'IN PROGRESS – OPEN RUN, NOT FINISHED' : 'IN PROGRESS – NOT CLOSED', M, y); doc.setTextColor(0); y += 14; }
+    else if (m.cl && m.cl.open) { doc.setTextColor(11, 95, 165); doc.setFontSize(11); doc.text(winAnsi(`OPEN RUN – SET POINT ${m.cl.setPoint} ELEV ${C.f3(m.cl.setElev)} FT – NO CLOSING CHECK`), M, y); doc.setTextColor(0); y += 14; }
     doc.setFontSize(9);
     headerLines(m).forEach(([k, v]) => { doc.setFont('helvetica', 'bold'); doc.text(winAnsi(k), M, y); doc.setFont('helvetica', 'normal'); doc.text(winAnsi(v), M + 95, y, { maxWidth: W - 2 * M - 95 }); y += 12; });
     y += 4;
@@ -284,7 +294,7 @@ export function pdfReport(job, surveys, inc, planMaps) {
     if (m.pegT && inc.peg !== false) block(`PEG TEST RECORD (${m.pegOn ? 'applied' : 'not applied'})`, pegLines(m.pegT, m.peg));
     if (inc.adjusted && !m.stake) {
       if (m.adj) block(`FINAL ELEVATIONS (adjusted by ${s.adjustMethod === 'distance' ? 'distance' : 'setups'})`, [['Point', 'Measured / Corr / ADJUSTED'], ...m.adj.map((p) => [p.point + (p.side ? ' (IFS)' : ''), `${C.f3(p.elev)}  ${sgn(p.correction)}  ${C.f3(p.adjusted)}`])]);
-      else block('ELEVATIONS (unadjusted – not closed)', m.comp.pointElev.map((p) => [p.point + (p.side ? ' (IFS)' : ''), C.f3(p.elev)]));
+      else block(m.cl && m.cl.open ? 'ELEVATIONS (open run – unadjusted)' : 'ELEVATIONS (unadjusted – not closed)', m.comp.pointElev.map((p) => [p.point + (p.side ? ' (IFS)' : ''), C.f3(p.elev)]));
     }
     if (inc.plan !== false && planMaps && planMaps[s.id]) planMaps[s.id].forEach((mp) => planMapPage(doc, job, s, mp));
   });
@@ -350,7 +360,7 @@ export function previewPages(job, surveys, inc, planMaps) {
   surveys.forEach((s, si) => {
     if (si && cur.length) { pages.push(cur.join('')); cur = []; lines = 0; }
     const m = surveyModel(job, s);
-    push(`<h3>BLUEWORKS LEVEL BOOK – ${e(job.name)}</h3><div style="height:2px;background:#FFC400;margin:2px 0 4px"></div>${m.closed ? '' : '<div class="inprog">IN PROGRESS – NOT CLOSED</div>'}`, 3);
+    push(`<h3>BLUEWORKS LEVEL BOOK – ${e(job.name)}</h3><div style="height:2px;background:#FFC400;margin:2px 0 4px"></div>${m.closed ? (m.cl && m.cl.open ? `<div class="inprog" style="color:#0B5FA5;border-color:#0B5FA5">OPEN RUN – SET POINT ${e(m.cl.setPoint)} ELEV ${C.f3(m.cl.setElev)} FT – NO CLOSING CHECK</div>` : '') : `<div class="inprog">${m.cl && m.cl.open ? 'IN PROGRESS – OPEN RUN, NOT FINISHED' : 'IN PROGRESS – NOT CLOSED'}</div>`}`, 3);
     push(`<table class="kvt">${headerLines(m).map(([k, v]) => `<tr><td style="text-align:left;font-family:Helvetica;font-weight:700;width:28%;background:none">${e(k)}</td><td style="text-align:left;background:none">${e(v)}</td></tr>`).join('')}</table>`, 11);
     if (m.stake) {
       const col = (t) => (t.startsWith('C') ? '#C5221F' : t.startsWith('F') ? '#0B5FA5' : '#1E8E3E');
@@ -376,7 +386,7 @@ export function previewPages(job, surveys, inc, planMaps) {
     if (m.pegT && inc.peg !== false) block(`PEG TEST RECORD (${m.pegOn ? 'applied' : 'not applied'})`, pegLines(m.pegT, m.peg));
     if (inc.adjusted && !m.stake) {
       if (m.adj) block(`FINAL ELEVATIONS (adjusted by ${s.adjustMethod === 'distance' ? 'distance' : 'setups'})`, [['Point', 'Measured / Corr / ADJUSTED'], ...m.adj.map((p) => [p.point + (p.side ? ' (IFS)' : ''), `${C.f3(p.elev)}  ${sgn(p.correction)}  ${C.f3(p.adjusted)}`])]);
-      else block('ELEVATIONS (unadjusted – not closed)', m.comp.pointElev.map((p) => [p.point + (p.side ? ' (IFS)' : ''), C.f3(p.elev)]));
+      else block(m.cl && m.cl.open ? 'ELEVATIONS (open run – unadjusted)' : 'ELEVATIONS (unadjusted – not closed)', m.comp.pointElev.map((p) => [p.point + (p.side ? ' (IFS)' : ''), C.f3(p.elev)]));
     }
     if (inc.plan !== false && planMaps && planMaps[s.id]) planMaps[s.id].forEach((mp) => {
       if (cur.length) { pages.push(cur.join('')); cur = []; lines = 0; }

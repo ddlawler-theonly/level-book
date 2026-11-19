@@ -107,7 +107,7 @@ export const usesDist = (s) => s.useDist !== false;
 export const isBMName = (name, s) => {
   if (!name) return false;
   const n = name.trim().toUpperCase();
-  return n === (s.startBM?.name || '').toUpperCase() || n === (s.closeBM?.name || '').toUpperCase() || /^T?BM/.test(n);
+  return n === (s.startBM?.name || '').toUpperCase() || (s.closeBM && hasElev(s.closeBM.elev) && n === (s.closeBM.name || '').toUpperCase()) || /^T?BM/.test(n);
 };
 
 // Walk the readings and reduce the whole level book.
@@ -215,17 +215,31 @@ export function distTotals(s, comp = computeSurvey(s)) {
   return { rows, cumBS: round(bs, 1), cumFS: round(fs, 1), bal: round(bs - fs, 1), total: round(bs + fs, 1), open: comp.expect === 'FS', used: usesDist(s) };
 }
 
+// Closing elevation known? Loops always close on the start BM. A run may be OPEN: no closing BM elevation,
+// it simply ends on a set point (the last foresight) whose elevation is the result – no misclosure check.
+const hasElev = (v) => v != null && v !== '' && isFinite(Number(v));
+export const hasKnownClose = (s) => s.type !== 'run' || !!(s.closeBM && hasElev(s.closeBM.elev) && String(s.closeBM.name || '').trim());
+export const isOpenRun = (s) => s.type === 'run' && !hasKnownClose(s);
+
 export function closure(s, comp = computeSurvey(s)) {
+  const miles = round(comp.totalDist / FT_PER_MILE, 4);
+  if (isOpenRun(s)) {
+    // Finished = the last reading is a foresight (the set point). If a set point name was planned, any FS end still counts.
+    const ended = comp.expect === 'BS' && !!comp.lastFS;
+    const planned = s.closeBM && String(s.closeBM.name || '').trim() ? String(s.closeBM.name).trim().toUpperCase() : null;
+    return { open: true, ended, bm: null, planned, closedOn: false, setPoint: ended ? comp.currentPoint : null, setElev: ended ? comp.lastElev : null,
+      known: null, computed: comp.lastElev, misclosure: null, miles, feet: comp.totalDist, setups: comp.setups.length, k: standardK(s), allowable: null, pass: false,
+      noDistance: !(comp.totalDist > 0), distOff: !usesDist(s) };
+  }
   const bm = closingBM(s);
   const closedOn = comp.expect === 'BS' && comp.lastFS && bm && comp.currentPoint.trim().toUpperCase() === String(bm.name).trim().toUpperCase();
   const known = bm ? Number(bm.elev) : null;
   const computed = comp.lastElev;
   const misclosure = round(computed - known, 3);
-  const miles = round(comp.totalDist / FT_PER_MILE, 4);
   const k = standardK(s);
   const allow = comp.totalDist > 0 ? allowable(k, miles) : null;
   const pass = allow != null && Math.abs(misclosure) <= allow + 1e-9;
-  return { bm, closedOn: !!closedOn, known, computed, misclosure, miles, feet: comp.totalDist, setups: comp.setups.length, k, allowable: allow, pass, noDistance: !(comp.totalDist > 0), distOff: !usesDist(s) };
+  return { open: false, bm, closedOn: !!closedOn, known, computed, misclosure, miles, feet: comp.totalDist, setups: comp.setups.length, k, allowable: allow, pass, noDistance: !(comp.totalDist > 0), distOff: !usesDist(s) };
 }
 
 // Proportional adjustment. Correction = −misclosure distributed by setup count or by cumulative distance.
@@ -233,7 +247,7 @@ export function closure(s, comp = computeSurvey(s)) {
 // of the setup's height of instrument (setup i -> i/n; distance -> cumulative distance through that setup's BS).
 export function adjust(s, method = 'setups', comp = computeSurvey(s), cl = closure(s, comp)) {
   if (!usesDist(s)) method = 'setups'; // distance-based adjustment needs distances
-  const corr = -cl.misclosure;
+  const corr = cl.misclosure == null ? 0 : -cl.misclosure; // open run: nothing to distribute
   const n = comp.setups.length || 1;
   const total = comp.totalDist || 0;
   const bsCum = []; let c = 0;
@@ -253,6 +267,7 @@ export function surveyStatus(s) {
   if (s.type === 'site' || s.type === 'stake') return s.closed ? 'closed' : 'open';
   if (!s.closed) return 'open';
   const cl = closure(s);
+  if (cl.open) return cl.ended ? 'closed' : 'open'; // open run finished on its set point: done, no closure check
   return cl.pass ? 'closed' : 'check';
 }
 
