@@ -33,7 +33,7 @@ export function seedJobs() {
   };
   const now = Date.now();
   return [
-    { id: uid(), name: 'Pearland Tellepson', date: '2026-11-16', description: 'Pad grades, north lot BMs', client: 'SAMPLE DATA', archived: false, created: now, updated: now, surveys: [loop, run, seedStake()] },
+    { id: uid(), name: 'Pearland Tellepson', date: '2026-11-16', description: 'Pad grades, north lot BMs', client: 'SAMPLE DATA', sample: true, archived: false, created: now, updated: now, surveys: [loop, run, seedStake()] },
   ];
 }
 

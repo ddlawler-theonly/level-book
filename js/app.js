@@ -2,6 +2,8 @@ import * as C from './calc.js';
 import { seedJobs, seedPegTests, seedStake, surveyDefaults, uid } from './seed.js';
 import { RodView } from './rod.js';
 import * as R from './report.js';
+import * as P from './plan.js';
+import * as E from './ent.js';
 
 // ---------- native bridge (Capacitor iOS build injects window.LBNative; absent in the browser/PWA) ----------
 const N = () => (window.LBNative && window.LBNative.isNative ? window.LBNative : null);
@@ -16,6 +18,7 @@ function load() {
   if (!Array.isArray(db.pegTests)) { db.pegTests = seedPegTests(); save(); } // v1.1.0: peg tests live at app level (all jobs)
   if (!(db.prefs.pegTol > 0)) db.prefs.pegTol = C.PEG_TOL_DEFAULT;
   if (typeof db.prefs.useDist !== 'boolean') db.prefs.useDist = true;
+  if (!KEYPAD_SIZES[db.prefs.keypad]) db.prefs.keypad = 'compact';
   // v1.2.0: add the sample Stake Out to the sample Pearland job once
   if (!db.prefs.stakeSeeded) { const sj = db.jobs.find((j) => j.client === 'SAMPLE DATA' && j.surveys.some((x) => x.sample)); if (sj && !sj.surveys.some((x) => x.type === 'stake')) sj.surveys.push(seedStake()); db.prefs.stakeSeeded = true; save(); }
 }
@@ -38,6 +41,7 @@ const SHORT = { loop: 'Loop', run: 'Run', site: 'Site levels', stake: 'Stake' };
 const sgn = (v) => (v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(3));
 
 const I = {
+  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M9.3 9.2a2.8 2.8 0 0 1 5.4 1c0 1.9-2.7 2.4-2.7 4"/><circle cx="12" cy="17.6" r=".6" fill="currentColor"/></svg>',
   chat: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>',
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/><circle cx="12" cy="12" r="7"/></svg>',
   theme: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>',
@@ -49,26 +53,85 @@ const I = {
   ok: '<svg viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 25l9 9 19-20"/></svg>',
   x: '<svg viewBox="0 0 48 48" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round"><path d="M13 13l22 22M35 13L13 35"/></svg>',
   stake: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 34h32"/><path d="M20 36V10"/><path d="M20 10l10 4-10 4"/><path d="M8 26h24" stroke-dasharray="3 3"/></svg>',
+  map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/><circle cx="12" cy="10" r="0.6" fill="currentColor"/></svg>',
   peg: '<svg viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 34h34"/><path d="M8 34V14M32 34V10"/><path d="M6 14h4M6 19h4M6 24h4M30 10h4M30 15h4M30 20h4"/><path d="M14 22l4-6 4 6M18 16v-3"/><path d="M13 13h21" stroke-dasharray="2 3"/></svg>',
   level: '<svg viewBox="0 0 96 96" width="96" height="96" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><rect x="62" y="10" width="14" height="76" rx="2"/><path d="M62 22h7M62 34h7M62 46h7M62 58h7M62 70h7"/><path d="M16 40h30l-4 10H20z"/><path d="M31 50v12M22 86l9-24 9 24"/><path d="M46 44h12" stroke-dasharray="3 4"/></svg>',
 };
-const topbar = ({ back, title, right = '', wordmark }) => `<header class="topbar">${back ? `<button class="back" data-back="${esc(back.href)}">‹ ${esc(back.label)}</button>` : ''}${wordmark ? `<span class="wordmark" aria-label="BlueWorks Level Book"><small>BLUEWORKS</small>LEVEL BOOK</span><span class="trialtag" title="Field trial build">TRIAL</span><span class="vertag">v${R.APP_VERSION}</span><span class="spacer"></span>` : `<span class="title">${esc(title || '')}</span>`}${right}</header>`;
+const topbar = ({ back, title, right = '', wordmark }) => `<header class="topbar">${back ? `<button class="back" data-back="${esc(back.href)}">‹ ${esc(back.label)}</button>` : ''}${wordmark ? `<span class="wordmark" aria-label="BlueWorks Level Book"><small>BLUEWORKS</small>LEVEL BOOK</span><span class="vertag">v${R.APP_VERSION}</span>${trialChip()}<span class="spacer"></span>` : `<span class="title">${esc(title || '')}</span>`}${right}</header>`;
 const sysIcons = () => `<button class="iconbtn" data-act="feedback" aria-label="Send feedback">${I.chat}</button><button class="iconbtn" data-act="theme" aria-label="Toggle Sunlight/Dusk theme">${I.theme}</button><button class="iconbtn" data-act="settings" aria-label="Settings">${I.gear}</button>`;
 function bindCommon(root) {
   $$('[data-back]', root).forEach((b) => (b.onclick = () => go(b.dataset.back)));
   $$('[data-act="theme"]', root).forEach((b) => (b.onclick = toggleTheme));
   $$('[data-act="settings"]', root).forEach((b) => (b.onclick = openSettings));
   $$('[data-act="feedback"]', root).forEach((b) => (b.onclick = () => openFeedback()));
+  $$('[data-act="help"]', root).forEach((b) => (b.onclick = () => openManual()));
+  $$('[data-act="pro"]', root).forEach((b) => (b.onclick = () => upgradeSheet()));
 }
 
-// ---------- field trial: welcome + feedback ----------
+// ---------- Free vs Pro (entitlements in ent.js) ----------
+const FREE_JOB_LIMIT = 2; // Free / trialExpired: sample job doesn't count, archived jobs do
+const PRO = () => E.isPro();
+const isSampleJob = (j) => !!j.sample || (j.client === 'SAMPLE DATA' && j.surveys.some((x) => x.sample));
+const countedJobs = () => db.jobs.filter((j) => !isSampleJob(j)).length;
+const canAddJob = () => PRO() || countedJobs() < FREE_JOB_LIMIT;
+const isProSurvey = (s) => !!s && (s.type === 'loop' || s.type === 'stake' || (s.method === 'three' && s.type !== 'site'));
+const proLocked = (s) => !PRO() && isProSurvey(s);
+const roFor = (job, s) => job.archived || proLocked(s);
+const LOCK = '<span class="protag lock" title="Pro feature">🔒 PRO</span>';
+const lockIf = () => (PRO() ? '' : LOCK);
+const PRO_FEATURES = ['Unlimited jobs', 'Level Loop with loop adjustment', 'Three-wire entry & stadia distance', 'Stake Out (cut/fill)', 'Peg Test & peg correction', 'Use distance switch & sight balance checks', 'Plan sheet: attach PDFs, mark shots, map page', 'PDF reports, CSV/text export & sharing'];
+function roBar(job, s) {
+  if (job.archived) return '<div class="msg" style="color:var(--muted);text-align:center">Archived job – read-only</div>';
+  return `<div class="robar"><div class="msg" style="color:var(--muted);text-align:center">${esc(TYPE[s.type])}${s.method === 'three' ? ' · three-wire' : ''} is a Pro survey – read-only on Free</div><button class="btn primary block" id="roUnlock">UNLOCK WITH PRO</button></div>`;
+}
+function bindRoBar(job, s) { const b = $('#roUnlock'); if (b) b.onclick = () => upgradeSheet('Editing ' + TYPE[s.type]); }
+let pendingUpgrade = null; // feature name to show after the next render (route guards)
+function upgradeSheet(feature, { msg } = {}) {
+  const st = E.state(); const used = E.trialUsed();
+  const s = sheet('BlueWorks Level Book Pro', `<div class="upg">
+    ${msg ? `<div class="upg-msg">${esc(msg)}</div>` : feature ? `<div class="upg-msg"><b>${esc(feature)}</b> is a Pro feature.</div>` : ''}
+    ${!used ? `<button class="btn primary block" id="upTrial">START 7-DAY FREE TRIAL</button><div class="upg-note">Free for 7 days · no account, no card · one trial per device</div>`
+      : st.state === 'trial' ? `<div class="upg-note">Pro trial active · ${st.daysLeft} day${st.daysLeft === 1 ? '' : 's'} left</div>` : '<div class="upg-note">The free trial has been used on this device.</div>'}
+    <ul class="upg-list">${PRO_FEATURES.map((f) => `<li>✔ ${esc(f)}</li>`).join('')}</ul>
+    <div class="upg-price"><span><b>$24.99</b>/yr</span><span class="or">or</span><span><b>$100</b> one-time</span></div>
+    <button class="btn block" id="upBuy" disabled>BUY PRO · coming soon</button>
+    <div class="upg-note">Your jobs and data stay on this phone on Free or Pro.</div></div>`, { tall: true });
+  const t = $('#upTrial', s.el);
+  if (t) t.onclick = async () => { t.disabled = true; if (await E.startTrial()) { s.close(); render(); toast('Pro trial started · 7 days'); } else { toast('Trial already used on this device'); s.close(); } };
+  return s;
+}
+const guard = (feature) => { if (PRO()) return true; upgradeSheet(feature); return false; };
+const jobLimitSheet = () => upgradeSheet(null, { msg: `Free includes ${FREE_JOB_LIMIT} jobs. Upgrade to Pro for unlimited jobs` });
+const trialChip = () => { const st = E.state(); return st.state === 'trial' ? `<button class="trialchip" data-act="pro" aria-label="Pro trial: ${st.daysLeft} day${st.daysLeft === 1 ? '' : 's'} left"><span class="long">PRO TRIAL</span><small>${st.daysLeft} day${st.daysLeft === 1 ? '' : 's'} left</small><span class="short">${st.daysLeft}d</span></button>` : ''; };
+function trialEndedSheet() {
+  E.markEndNoticeSeen();
+  const s = sheet('Your Pro trial ended', `<div class="upg"><div class="upg-msg">${E.state().rollback ? 'The device clock is set before the trial start, so the trial has ended.' : 'Thanks for trying Pro. You are back on the Free plan.'}</div>
+    <ul class="upg-list free"><li>✔ All your jobs and surveys are kept – nothing is deleted</li><li>✔ Level Runs, Site Levels, shot entry, rod, closure verdict, backup stay free</li><li>🔒 Loops, Stake Out, peg tests and three-wire surveys open read-only</li><li>🔒 New Pro surveys, editing them, and reports/exports need Pro</li></ul>
+    <div class="upg-price"><span><b>$24.99</b>/yr</span><span class="or">or</span><span><b>$100</b> one-time</span></div>
+    <button class="btn block" disabled>BUY PRO · coming soon</button><button class="btn primary block" data-close style="margin-top:8px">CONTINUE ON FREE</button></div>`);
+  s.el.classList.add('trial-ended'); return s;
+}
+function afterRender() {
+  if (pendingUpgrade) { const f = pendingUpgrade; pendingUpgrade = null; upgradeSheet(f); return; }
+  if (E.state().state === 'trialExpired' && !E.endNoticeSeen() && !$('.welcome')) trialEndedSheet();
+}
+function proStatusBlock() {
+  const st = E.state();
+  const line = st.state === 'pro' ? 'Pro · all features unlocked' : st.state === 'trial' ? `Pro trial · ${st.daysLeft} day${st.daysLeft === 1 ? '' : 's'} left (ends ${new Date(st.ends).toLocaleDateString('en-US')})` : st.state === 'trialExpired' ? 'Free · Pro trial ended' : 'Free';
+  return `<div class="card" id="proStatus" style="padding:12px 16px"><div style="font-weight:800">${esc(line)}${st.dev ? ' <span class="tag">DEV</span>' : ''}</div>
+    <div class="msg" style="font-weight:400;color:var(--muted)">${st.state === 'pro' ? '' : st.state === 'trial' ? 'Unlimited jobs during the trial' : `Free includes ${FREE_JOB_LIMIT} jobs (sample not counted) · ${countedJobs()} used`}</div>
+    ${st.state === 'pro' ? '' : `<button class="btn block" id="proSee" style="margin-top:8px">${E.trialUsed() ? 'SEE PRO FEATURES' : 'START 7-DAY FREE TRIAL'}</button>`}</div>`;
+}
+
+// ---------- welcome + feedback ----------
 const FEEDBACK_TO = 'ddlawler@hotmail.com';
 function welcomeCard() {
-  const o = overlay(`<div class="dialog welcome" role="dialog" aria-label="Welcome to the BlueWorks Level Book field trial">
-    <div class="wl-h"><span class="trialtag">TRIAL</span><h2>Welcome to BlueWorks Level Book</h2></div>
-    <p>Thanks for field-testing <b>BlueWorks Level Book v${R.APP_VERSION}</b> – a digital level book for loops, runs, site levels, stake out and peg tests.</p>
+  const o = overlay(`<div class="dialog welcome" role="dialog" aria-label="Welcome to BlueWorks Level Book">
+    <div class="wl-h"><img class="wl-icon" src="icons/icon-192.png" alt="" width="64" height="64"><h2>Welcome to BlueWorks Level Book</h2></div>
+    <p><b>BlueWorks Level Book v${R.APP_VERSION}</b> is a digital level book for loops, runs, site levels, stake out and peg tests.</p>
     <ul class="wl">
       <li><b>Your data stays on your phone.</b> Nothing is uploaded; there is no account.</li>
+      <li><b>Install it</b> for offline use: ${isIOS ? 'Safari → Share → <b>Add to Home Screen</b>' : 'Chrome menu → <b>Install app</b>'}.</li>
       <li><b>Send feedback</b> any time with the ${I.chat.replace('<svg', '<svg width="18" height="18" style="vertical-align:-4px"')} button at the top, or in Settings.</li>
       <li><b>Back up</b> with Settings → Export backup, especially before deleting the app.</li>
       <li>A <b>sample job</b> (Pearland) is loaded so you can look around.</li>
@@ -122,7 +185,7 @@ function openFeedback() {
     <div class="seg" id="fbCat">${cats.map(([v, l]) => `<button data-v="${v}" aria-pressed="${v === f.cat}">${l}</button>`).join('')}</div>
     <div class="section-label">Notes</div>
     <textarea class="input" id="fbNotes" rows="4" placeholder="What happened, what you expected, or what would help in the field…"></textarea>
-    ${ctx.s ? `<label class="checkrow"><input type="checkbox" id="fbAttach"><span>Attach current survey report (PDF)<br><small class="mono">${esc(ctx.s.name)}</small></span></label>` : ''}
+    ${ctx.s && PRO() ? `<label class="checkrow"><input type="checkbox" id="fbAttach"><span>Attach current survey report (PDF)<br><small class="mono">${esc(ctx.s.name)}</small></span></label>` : ''}
     <div class="msg" style="font-weight:400;color:var(--muted);margin:8px 0">Goes to ${FEEDBACK_TO}. App version, device, screen size, theme and current screen are added so we can reproduce it.</div>
     <button class="btn primary block" id="fbSend">SEND FEEDBACK ▶</button>`, { tall: true });
   $$('#fbRate button', s.el).forEach((b) => (b.onclick = () => { f.rating = +b.dataset.v; $$('#fbRate button', s.el).forEach((x) => { x.classList.toggle('on', +x.dataset.v <= f.rating); x.setAttribute('aria-checked', +x.dataset.v === f.rating); }); }));
@@ -145,6 +208,51 @@ function openFeedback() {
   return s;
 }
 
+// ---------- help & manual ----------
+// The manual PDF is bundled (docs/) and precached by the service worker, so it opens offline.
+// It renders in-app with the vendored pdf.js (no target=_blank, which is unreliable in iOS standalone PWAs and Capacitor).
+const MANUAL_URL = 'docs/LevelBook-Manual.pdf';
+let manualBytes = null;
+async function openManual() {
+  const o = overlay(`<div class="manual" role="dialog" aria-label="Help & Manual">
+    <header class="topbar"><button class="back" data-close>‹ Close</button><span class="title">Help &amp; Manual</span><span class="mpage mono" id="mPage"></span></header>
+    <div class="mscroll" id="mScroll"><div class="mstatus" id="mStatus">Loading manual…</div></div></div>`);
+  o.el.classList.add('manual-wrap');
+  const sc = $('#mScroll', o.el), st = $('#mStatus', o.el);
+  try {
+    if (!manualBytes) { const r = await fetch(MANUAL_URL); if (!r.ok) throw new Error('HTTP ' + r.status); manualBytes = new Uint8Array(await r.arrayBuffer()); }
+    const lib = await P.pdfjs();
+    const doc = await lib.getDocument({ data: manualBytes.slice(), standardFontDataUrl: new URL('vendor/pdfjs/standard_fonts/', location.href).href, isEvalSupported: false, isImageDecoderSupported: false }).promise;
+    if (!document.body.contains(o.el)) { doc.destroy(); return; }
+    st.remove(); o.el.dataset.pages = doc.numPages;
+    const p1 = await doc.getPage(1); const v1 = p1.getViewport({ scale: 1 }); const ratio = v1.height / v1.width;
+    const wraps = [];
+    for (let i = 1; i <= doc.numPages; i++) { const w = document.createElement('div'); w.className = 'mpg'; w.dataset.n = i; w.style.aspectRatio = `1 / ${ratio}`; sc.appendChild(w); wraps.push(w); }
+    const rendering = new Set();
+    const draw = async (w) => {
+      const n = +w.dataset.n; if (rendering.has(n) || w.dataset.done) return; rendering.add(n);
+      try {
+        const pg = await doc.getPage(n); const cssW = w.clientWidth || sc.clientWidth; const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+        const vp = pg.getViewport({ scale: (cssW * dpr) / pg.getViewport({ scale: 1 }).width });
+        const cv = document.createElement('canvas'); cv.width = Math.floor(vp.width); cv.height = Math.floor(vp.height); cv.setAttribute('aria-label', `Manual page ${n}`);
+        await pg.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+        w.appendChild(cv); w.dataset.done = '1'; pg.cleanup();
+      } catch (e) { console.warn('manual page', n, e); } finally { rendering.delete(n); }
+    };
+    const io = new IntersectionObserver((es) => es.forEach((e) => { if (e.isIntersecting) draw(e.target); }), { root: sc, rootMargin: '600px 0px' });
+    wraps.forEach((w) => io.observe(w));
+    const pageLbl = $('#mPage', o.el);
+    const upd = () => { const t = sc.scrollTop + sc.clientHeight / 3; const w = wraps.find((x) => x.offsetTop + x.offsetHeight > t) || wraps[0]; pageLbl.textContent = `${w.dataset.n} / ${doc.numPages}`; };
+    sc.addEventListener('scroll', upd, { passive: true }); upd();
+    const obs = new MutationObserver(() => { if (!document.body.contains(o.el)) { io.disconnect(); obs.disconnect(); doc.destroy(); } });
+    obs.observe(document.body, { childList: true });
+  } catch (e) {
+    console.warn('manual', e);
+    st.innerHTML = 'The manual could not be opened on this device.<br><small>Open the app once with a connection so it can be saved for offline use.</small>';
+  }
+  return o;
+}
+
 // ---------- theme ----------
 function applyTheme() {
   const dusk = db.prefs.theme === 'dusk';
@@ -155,6 +263,12 @@ function applyTheme() {
 }
 // Native status bar: light text on dark surfaces (Dusk, or the dark entry status strip).
 const syncStatusBar = () => N()?.setStatusBarDark(db.prefs.theme === 'dusk' || /\/entry/.test(location.hash));
+// Keypad size (Settings): large = v1.2.1 64 px keys, compact = 46 px (default), xcompact = 39 px.
+const KEYPAD_SIZES = { large: 'Large', compact: 'Compact', xcompact: 'Extra compact' };
+function applyKeypad() {
+  document.documentElement.dataset.keypad = KEYPAD_SIZES[db.prefs.keypad] ? db.prefs.keypad : 'compact';
+  if (rodView) requestAnimationFrame(() => rodView && rodView.draw()); // freed height goes to the rod
+}
 function toggleTheme() { db.prefs.theme = db.prefs.theme === 'dusk' ? 'sunlight' : 'dusk'; save(); applyTheme(); if (rodView) rodView.draw(); }
 
 // ---------- overlays ----------
@@ -186,7 +300,7 @@ function snackbar(text, actionLabel, onAction, ms = 6000) {
   $('.snackbar')?.remove(); clearTimeout(snackTimer);
   const s = document.createElement('div'); s.className = 'snackbar'; s.setAttribute('role', 'status');
   s.innerHTML = `<span>${esc(text)}</span>${actionLabel ? `<button>${esc(actionLabel)}</button>` : ''}`;
-  const pin = $('.pinned') || $('.keypad'); s.style.bottom = `${(pin ? pin.offsetHeight : 0) + 12}px`;
+  const pin = $('.planview .pv-bar') || $('.pinned') || $('.keypad'); s.style.bottom = `${(pin ? pin.offsetHeight : 0) + 12}px`;
   document.body.appendChild(s);
   if (actionLabel) $('button', s).onclick = () => { s.remove(); onAction(); };
   snackTimer = setTimeout(() => s.remove(), ms);
@@ -215,9 +329,11 @@ const openSurveyOf = (job) => [...job.surveys].sort((a, b) => b.updated - a.upda
 // ---------- router ----------
 let rodView = null; let entry = null;
 window.addEventListener('hashchange', () => { $('.snackbar')?.remove(); render(); });
-function render() {
+function render() { const h0 = location.hash; renderScreen(); if (location.hash === h0) afterRender(); } // a redirect re-renders via hashchange; show sheets after that one
+function renderScreen() {
   rodView = null; if (db) syncStatusBar();
   $$('.overlay').forEach((o) => o.remove());
+  $$('.planview').forEach((o) => o.__close && o.__close('nav'));
   const h = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   try {
     if (!h.length) return jobsScreen();
@@ -263,7 +379,7 @@ function jobsScreen() {
   $('#q').oninput = (e) => { jobsUI.q = e.target.value; drawList(); };
   $$('#tabs button').forEach((b) => (b.onclick = () => { jobsUI.tab = b.dataset.v; jobsScreen(); }));
   $('#sortBtn').onclick = () => choose('Sort jobs', [{ v: 'date', label: 'Project date' }, { v: 'name', label: 'Name' }, { v: 'edited', label: 'Last edited' }], jobsUI.sort, (v) => { jobsUI.sort = v; jobsScreen(); });
-  $('#newJob').onclick = () => jobSheet();
+  $('#newJob').onclick = () => (canAddJob() ? jobSheet() : jobLimitSheet());
   drawList();
   if (!db.prefs.welcomed) welcomeCard();
 }
@@ -325,7 +441,7 @@ function jobActions(job) {
 }
 async function doJobAction(job, a) {
   if (a === 'open') return go(`#/j/${job.id}`);
-  if (a === 'share') return go(`#/j/${job.id}/share`);
+  if (a === 'share') return guard('PDF reports & sharing') && go(`#/j/${job.id}/share`);
   if (a === 'edit') return jobSheet(job);
   if (a === 'archive') { job.archived = true; touch(job); render(); snackbar('Job archived', 'UNDO', () => { job.archived = false; touch(job); render(); }); return; }
   if (a === 'restore') { job.archived = false; touch(job); render(); toast('Job restored'); return; }
@@ -351,6 +467,7 @@ function jobSheet(job) {
     const data = { name: nm.value.trim(), date: $('#jd', s.el).value || todayISO(), description: ds.value.trim(), client: $('#jcl', s.el).value.trim() };
     if (edit) { Object.assign(job, data); touch(job); s.close(); render(); return; }
     const nj = { id: uid(), ...data, archived: false, created: Date.now(), updated: Date.now(), surveys: [] };
+    if (!canAddJob()) { s.close(); return jobLimitSheet(); }
     db.jobs.push(nj); save(); s.close(); go(`#/j/${nj.id}`);
   };
 }
@@ -359,20 +476,22 @@ function jobSheet(job) {
 function menuScreen(job) {
   const ro = job.archived; const root = app();
   const surveys = [...job.surveys].sort((a, b) => b.updated - a.updated);
-  root.innerHTML = `<div class="screen">${topbar({ back: { href: '#/', label: 'Jobs' }, title: job.name, right: sysIcons() })}
+  root.innerHTML = `<div class="screen">${topbar({ back: { href: '#/', label: 'Jobs' }, title: job.name, right: `<button class="iconbtn helpbtn" data-act="help" id="menuHelp" aria-label="Help & Manual">${I.help}</button>` + sysIcons() })}
     <div class="scroll">
       ${ro ? `<div class="banner"><span><b>Archived</b> · read-only</span><button class="btn blue" id="restore">RESTORE</button></div>` : ''}
       <div class="section-label">${esc(R.usDate(job.date))} · ${esc(job.description || '')}</div>
-      ${[['loop', 'Level Loop', 'Start and close on the same benchmark'], ['run', 'Level Run', 'Carry elevation from one BM to another'], ['site', 'Site Levels', 'One setup, many side shots'], ['stake', 'Stake Out', 'Backsight a BM, set grade stakes – cut/fill'], ['peg', 'Peg Test', pegMenuLine()]].map(([t, n, d]) => `<button class="modecard" data-mode="${t}" ${ro && t !== 'peg' ? 'disabled' : ''}>${I[t]}<div><div class="mt">${n}</div><div class="md">${d}</div></div></button>`).join('')}
+      ${[['loop', 'Level Loop', 'Start and close on the same benchmark'], ['run', 'Level Run', 'Carry elevation from one BM to another'], ['site', 'Site Levels', 'One setup, many side shots'], ['stake', 'Stake Out', 'Backsight a BM, set grade stakes – cut/fill'], ['peg', 'Peg Test', pegMenuLine()]].map(([t, n, d]) => `<button class="modecard${['loop', 'stake', 'peg'].includes(t) && !PRO() ? ' locked' : ''}" data-mode="${t}" ${ro && t !== 'peg' ? 'disabled' : ''}>${I[t]}<div><div class="mt">${n}${['loop', 'stake', 'peg'].includes(t) ? lockIf() : ''}</div><div class="md">${d}</div></div></button>`).join('')}
+      ${planSection(job)}
       <div class="section-label">Recent</div>
-      ${surveys.length ? `<div class="recent">${surveys.map((s) => `<button data-sid="${s.id}"><span class="rn">${esc(s.name)}</span><span class="tag">${SHORT[s.type].toUpperCase()}</span>${s.method === 'three' && s.type !== 'site' ? '<span class="tag blue">3-WIRE</span>' : ''}${statusChip(s)}</button>`).join('')}</div>` : '<div class="empty" style="padding:24px">No surveys in this job yet. Pick a mode above.</div>'}
+      ${surveys.length ? `<div class="recent">${surveys.map((s) => `<button data-sid="${s.id}"><span class="rn">${esc(s.name)}</span><span class="tag">${SHORT[s.type].toUpperCase()}</span>${s.method === 'three' && s.type !== 'site' ? '<span class="tag blue">3-WIRE</span>' : ''}${proLocked(s) ? '<span class="tag">READ-ONLY</span>' : ''}${statusChip(s)}</button>`).join('')}</div>` : '<div class="empty" style="padding:24px">No surveys in this job yet. Pick a mode above.</div>'}
     </div>
-    <div class="pinned"><div class="row2"><button class="btn" id="shareJob">${I.share.replace('<svg', '<svg width="20" height="20"')} SHARE JOB</button><button class="btn" id="editJob">EDIT JOB</button></div></div></div>`;
+    <div class="pinned"><div class="row2"><button class="btn" id="shareJob">${I.share.replace('<svg', '<svg width="20" height="20"')} SHARE JOB${lockIf()}</button><button class="btn" id="editJob">EDIT JOB</button></div></div></div>`;
   bindCommon(root);
   $('#restore') && ($('#restore').onclick = () => { job.archived = false; touch(job); render(); });
-  $$('.modecard').forEach((b) => (b.onclick = () => { b.classList.add('flash'); setTimeout(() => go(b.dataset.mode === 'peg' ? `#/j/${job.id}/peg` : `#/j/${job.id}/new/${b.dataset.mode}`), 120); }));
+  $$('.modecard').forEach((b) => (b.onclick = () => { if ((b.dataset.mode === 'loop' || b.dataset.mode === 'stake') && !guard(TYPE[b.dataset.mode])) return; b.classList.add('flash'); setTimeout(() => go(b.dataset.mode === 'peg' ? `#/j/${job.id}/peg` : `#/j/${job.id}/new/${b.dataset.mode}`), 120); }));
   $$('.recent button').forEach((b) => (b.onclick = () => go(`#/j/${job.id}/s/${b.dataset.sid}/book`)));
-  $('#shareJob').onclick = () => go(`#/j/${job.id}/share`);
+  $('#shareJob').onclick = () => guard('PDF reports & sharing') && go(`#/j/${job.id}/share`);
+  bindPlanSection(job);
   $('#editJob').onclick = () => (ro ? toast('Archived jobs are read-only') : jobSheet(job));
 }
 function statusChip(s) {
@@ -386,6 +505,7 @@ function statusChip(s) {
 const INSTRUMENTS = ['Automatic level', 'Digital level', 'Dumpy level', 'Tilting level', 'Laser level', 'Other'];
 function setupScreen(job, type) {
   if (job.archived || !TYPE[type]) return go(`#/j/${job.id}`);
+  if ((type === 'loop' || type === 'stake') && !PRO()) { pendingUpgrade = TYPE[type]; return go(`#/j/${job.id}`); }
   const s = surveyDefaults(type);
   const count = job.surveys.filter((x) => x.type === type).length + 1;
   const root = app();
@@ -399,14 +519,15 @@ function setupScreen(job, type) {
         <label class="field"><span>Rod person</span><input class="input" id="rodp" autocomplete="off"></label>
         <div class="field"><span>Instrument</span><button class="selectbtn" id="inst"><span id="instv">Automatic level</span><span>▾</span></button></div>
         <div class="field"><span>Units</span><span class="chip locked">🔒 US decimal ft</span></div>`)}
-      ${type === 'site' || type === 'stake' ? '' : sec('Reading method', `<div class="seg" id="method"><button data-v="single" aria-pressed="true">Single wire</button><button data-v="three" aria-pressed="false">Three-wire</button></div>
+      ${type === 'site' || type === 'stake' ? '' : sec('Reading method', `<div class="seg" id="method"><button data-v="single" aria-pressed="true">Single wire</button><button data-v="three" aria-pressed="false">Three-wire${lockIf()}</button></div>
         <div id="threeOpts" hidden style="margin-top:16px"><label class="field"><span>Stadia constant K</span><input class="input num" id="sk" inputmode="decimal" value="100"></label>
         <label class="field"><span>Wire spread tolerance</span><div class="suffix" data-suffix="ft"><input class="input num" id="stol" inputmode="decimal" value="0.003"></div></label></div>`)}
       ${sec('Starting benchmark', `<label class="field"><span>BM name</span><input class="input" id="bmn" value="BM-1" autocomplete="off"></label><label class="field"><span>Elevation</span>${elevInput('bme')}</label>`)}
       ${type === 'run' ? sec('Closing benchmark', `<label class="field"><span>BM name</span><input class="input" id="cbn" placeholder="e.g. BM-7" autocomplete="off"></label><label class="field"><span>Known elevation</span>${elevInput('cbe')}</label>`) : ''}
       ${type === 'loop' ? sec('Closing benchmark', `<div class="msg" style="color:var(--muted)">A loop closes back on the starting benchmark.</div>`) : ''}
       ${sec('Distances', distRow(db.prefs.useDist, { id: 'setupDist', note: 'Default for this survey; you can switch it on the entry screen. OFF: no DIST field, no peg correction, no balance/sight checks, closure by setups.' }))}
-      ${type === 'site' ? '' : sec('Peg correction', pegSetupBlock())}
+      ${type === 'site' ? '' : sec(`Peg correction ${lockIf()}`, pegSetupBlock())}
+      <div id="planSec">${PRO() ? sec('Plan sheet', planSetupBlock(job)) : sec(`Plan sheet ${LOCK}`, '<button class="btn block" id="planLocked">Mark shots on a plan PDF</button>')}</div>
       ${sec('Checks', `${type === 'site' || type === 'stake' ? '' : `<div class="field"><span>Closure standard</span><button class="selectbtn" id="std"><span id="stdv">${C.STANDARDS[0].label} · 0.050 ft√mi</span><span>▾</span></button></div><label class="field" id="customRow" hidden><span>Custom constant (ft√mi)</span><input class="input num" id="ck" inputmode="decimal" value="0.05"></label>`}
         <div class="field"><span>Rod length</span><button class="selectbtn" id="rodl"><span id="rodlv">16 ft</span><span>▾</span></button></div>
         <label class="field"><span>BS/FS imbalance limit</span><div class="suffix" data-suffix="ft"><input class="input num" id="imb" inputmode="decimal" value="10"></div></label>
@@ -415,13 +536,20 @@ function setupScreen(job, type) {
     <div class="pinned"><button class="btn primary block" id="start" disabled>START BOOK ▶</button></div></div>`;
   bindCommon(root);
   const st = { inst: 'Automatic level', method: 'single', std: '3rd', rod: 16 };
-  const latest = C.latestPeg(db.pegTests); st.pegOn = !!latest && !latest.sample; st.useDist = db.prefs.useDist;
-  $('#setupDist').onclick = () => { st.useDist = !st.useDist; setSwitch($('#setupDist'), st.useDist); };
+  const latest = C.latestPeg(db.pegTests); st.pegOn = PRO() && !!latest && !latest.sample; st.useDist = db.prefs.useDist;
+  if (!PRO()) st.useDist = true; setSwitch($('#setupDist'), st.useDist); $('#planLocked') && ($('#planLocked').onclick = () => guard('Plan sheet'));
+  $('#setupDist').onclick = () => { if (!guard('Use distance switch')) return; st.useDist = !st.useDist; setSwitch($('#setupDist'), st.useDist); };
+  st.planMark = planList(job).length > 0;
+  const bindPlanSw = () => {
+    $('#planSw') && ($('#planSw').onclick = () => { if (!planList(job).length) return; st.planMark = !st.planMark; setSwitch($('#planSw'), st.planMark); });
+    $('#planAttach') && ($('#planAttach').onclick = () => attachPlan(job, { then: () => { $('#planSec').innerHTML = sec('Plan sheet', planSetupBlock(job)); st.planMark = true; bindPlanSw(); } }));
+  };
+  bindPlanSw();
   const pegSw = $('#pegSw');
-  if (pegSw) { setSwitch(pegSw, st.pegOn); pegSw.onclick = () => { if (!latest) return; st.pegOn = !st.pegOn; setSwitch(pegSw, st.pegOn); }; }
-  $('#pegShoot') && ($('#pegShoot').onclick = () => go(`#/j/${job.id}/peg/new`));
+  if (pegSw) { setSwitch(pegSw, st.pegOn); pegSw.onclick = () => { if (!guard('Peg correction')) return; if (!latest) return; st.pegOn = !st.pegOn; setSwitch(pegSw, st.pegOn); }; }
+  $('#pegShoot') && ($('#pegShoot').onclick = () => guard('Peg Test') && go(`#/j/${job.id}/peg/new`));
   $('#inst').onclick = () => choose('Instrument', INSTRUMENTS.map((v) => ({ v, label: v })), st.inst, (v) => { st.inst = v; $('#instv').textContent = v; });
-  $$('#method button').forEach((b) => (b.onclick = () => { st.method = b.dataset.v; $$('#method button').forEach((x) => x.setAttribute('aria-pressed', x === b)); $('#threeOpts').hidden = st.method !== 'three'; }));
+  $$('#method button').forEach((b) => (b.onclick = () => { if (b.dataset.v === 'three' && !guard('Three-wire entry')) return; st.method = b.dataset.v; $$('#method button').forEach((x) => x.setAttribute('aria-pressed', x === b)); $('#threeOpts').hidden = st.method !== 'three'; }));
   const stdLabel = (x) => (x.k ? `${x.label} · ${x.k} ft√mi` : x.label);
   $('#std') && ($('#std').onclick = () => choose('Closure standard', C.STANDARDS.map((x) => ({ v: x.id, label: stdLabel(x) })), st.std, (v) => { st.std = v; const x = C.STANDARDS.find((y) => y.id === v); $('#stdv').textContent = stdLabel(x); $('#customRow').hidden = v !== 'custom'; }));
   $('#rodl').onclick = () => choose('Rod length', [13, 14, 16, 25].map((v) => ({ v: String(v), label: `${v} ft` })), String(st.rod), (v) => { st.rod = Number(v); $('#rodlv').textContent = `${v} ft`; });
@@ -438,6 +566,7 @@ function setupScreen(job, type) {
       standard: st.std, customK: parseFloat($('#ck')?.value) || 0.05, rodLength: st.rod,
       imbalanceLimit: parseFloat($('#imb').value) || 10, maxSight: parseFloat($('#maxs').value) || 300,
       peg: type !== 'site' && latest ? { on: st.pegOn, test: pegSnap(latest) } : null, useDist: st.useDist,
+      ...(PRO() ? { planMark: st.planMark && planList(job).length > 0, pins: [] } : {}),
     });
     job.surveys.push(s); touch(job, s); entry = null; go(`#/j/${job.id}/s/${s.id}/entry`);
   };
@@ -487,8 +616,8 @@ function entryEval(s, st) {
     if (er) out.errors.push(er === 'over' ? `Reading over rod length (${L} ft)` : 'Reading below zero');
   }
   out.distRec = out.dist; if (!C.usesDist(s)) out.dist = null; // switch OFF: distance not used
-  if (out.dist != null && s.maxSight && out.dist > s.maxSight) out.warns.push(`⚠ Sight ${out.dist} ft > max ${s.maxSight} ft`);
-  if (st.type === 'FS' && out.dist != null) { const su = ctx.setups[ctx.setups.length - 1]; if (su && su.bsDist != null && Math.abs(su.bsDist - out.dist) > s.imbalanceLimit) out.warns.push(`⚠ Setup imbalance ${C.round(Math.abs(su.bsDist - out.dist), 1)} ft > ${s.imbalanceLimit} ft`); }
+  if (PRO() && out.dist != null && s.maxSight && out.dist > s.maxSight) out.warns.push(`⚠ Sight ${out.dist} ft > max ${s.maxSight} ft`);
+  if (PRO() && st.type === 'FS' && out.dist != null) { const su = ctx.setups[ctx.setups.length - 1]; if (su && su.bsDist != null && Math.abs(su.bsDist - out.dist) > s.imbalanceLimit) out.warns.push(`⚠ Setup imbalance ${C.round(Math.abs(su.bsDist - out.dist), 1)} ft > ${s.imbalanceLimit} ft`); }
   if (out.value != null && !isNaN(out.value)) {
     const peg = C.pegFor(s); out.peg = peg ? C.corrected(out.value, out.dist, peg) : null;
     const v = out.peg ? out.peg.v : out.value;
@@ -501,7 +630,7 @@ function entryEval(s, st) {
   return out;
 }
 function entryScreen(job, s, params) {
-  if (job.archived) return go(`#/j/${job.id}/s/${s.id}/book`);
+  if (roFor(job, s)) { if (proLocked(s)) pendingUpgrade = 'Editing ' + TYPE[s.type] + (s.method === 'three' ? ' (three-wire)' : ''); return go(`#/j/${job.id}/s/${s.id}/book`); }
   if (!entry || entry.sid !== s.id || params.toString() !== entry.params) { entry = newEntryState(job, s, params); entry.params = params.toString(); }
   const st = entry; const root = app();
   root.innerHTML = `<div class="screen">
@@ -600,19 +729,21 @@ async function confirmEntry(job, s) {
   const closeBM = C.closingBM(s);
   entry = null;
   if (r.type === 'FS' && s.type !== 'site' && closeBM && r.point === String(closeBM.name).toUpperCase()) {
-    render();
+    render(); await markShot(job, s, r.id);
     const ok = await confirmDialog({ title: `Closed on ${closeBM.name}`, text: `Foresight on ${closeBM.name} recorded. Close the ${s.type} now and check misclosure?`, ok: 'CLOSE ▶', cancel: 'Keep going' });
     if (ok) { s.closed = true; touch(job, s); return go(`#/j/${job.id}/s/${s.id}/close`); }
     return;
   }
   render();
+  if (planOn(job, s)) await markShot(job, s, r.id);
   toast(`${r.type} ${r.point} saved`);
 }
 
 // ---------- 4. Level book ----------
 const bookUI = { compact: false, editHint: false };
 function bookScreen(job, s) {
-  const ro = job.archived; const comp = C.computeSurvey(s); const three = s.method === 'three' && s.type !== 'site';
+  const ro = roFor(job, s); const comp = C.computeSurvey(s); const three = s.method === 'three' && s.type !== 'site';
+  if (!PRO()) comp.rows.forEach((r) => (r.warn = r.warn.filter((w) => !/imbalance|^Sight /.test(w)))); // sight balance checks are Pro
   const root = app();
   const rd0 = (v, text, w) => {
     if (v == null) return '';
@@ -640,7 +771,7 @@ function bookScreen(job, s) {
       <td class="${three ? '' : 'landscape-only'}">${dist}</td><td class="landscape-only" style="font-family:var(--sans);font-size:13px;text-align:left;max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(r.warn.join('; '))}</td></tr>`;
   }).join('');
   const balWarn = Math.abs(comp.imbalance) > s.imbalanceLimit;
-  root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}`, label: 'Job' }, title: s.name, right: `<span class="tag">${SHORT[s.type].toUpperCase()}</span>${three ? '<span class="tag blue">3-WIRE</span>' : ''}<button class="iconbtn" id="shareBtn" aria-label="Share report">${I.share}</button>` })}
+  root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}`, label: 'Job' }, title: s.name, right: `<span class="tag">${SHORT[s.type].toUpperCase()}</span>${three ? '<span class="tag blue">3-WIRE</span>' : ''}${PRO() ? `<button class="iconbtn planbtn" id="planBtn" aria-label="Plan sheet">${I.map}<span class="protag mini">PRO</span></button>` : ''}<button class="iconbtn" id="shareBtn" aria-label="Share report">${I.share}</button>` })}
     ${bookUI.editHint ? '<div class="hint">Tap a row to edit its reading</div>' : ''}
     ${three || s.type !== 'site' ? `<div class="booktools">${s.type !== 'site' ? pegChip(s, comp) : ''}${three ? `<button class="btn" id="compact" style="min-height:44px">${bookUI.compact ? '☑' : '☐'} Compact</button><span class="msg" style="color:var(--muted)">K ${s.stadiaK} · tol ${s.spreadTol} ft</span>` : ''}</div>` : ''}
     <div class="tablewrap"><table class="book${three ? ' three' : ''}"><thead><tr><th>STA</th><th>BS</th><th>HI</th><th>FS</th><th>ELEV</th><th class="${three ? '' : 'landscape-only'}">DIST</th><th class="landscape-only" style="text-align:left">NOTES</th></tr></thead><tbody>${rowsHtml}</tbody></table>
@@ -648,22 +779,24 @@ function bookScreen(job, s) {
     <div class="summary">
       <div>ΣBS ${comp.sumBS.toFixed(3)}   ΣFS ${comp.sumFS.toFixed(3)}</div>
       <div>ΣBS−ΣFS ${sgn(comp.arith.diff)} vs Δ${comp.arith.against === 'HI' ? 'HI' : 'elev'} ${sgn(comp.arith.delta)} <span class="${comp.arith.ok ? 'ok' : 'bad'}">${comp.arith.ok ? '✔ OK' : '✕ FAIL'}</span></div>
-      ${comp.distUsed ? `<div class="${balWarn ? 'wn' : ''}">BS/FS dist ${comp.totalBSdist} / ${comp.totalFSdist} ft · bal ${comp.imbalance > 0 ? '+' : ''}${comp.imbalance}${balWarn ? ' ⚠' : ''}</div>` : '<div style="color:var(--muted)">Distances not used · no balance check</div>'}
+      ${comp.distUsed && !PRO() ? `<div style="color:var(--muted)">BS/FS dist ${comp.totalBSdist} / ${comp.totalFSdist} ft · balance check ${LOCK}</div>` : comp.distUsed ? `<div class="${balWarn ? 'wn' : ''}">BS/FS dist ${comp.totalBSdist} / ${comp.totalFSdist} ft · bal ${comp.imbalance > 0 ? '+' : ''}${comp.imbalance}${balWarn ? ' ⚠' : ''}</div>` : '<div style="color:var(--muted)">Distances not used · no balance check</div>'}
       ${three ? `<div class="${comp.failedChecks ? 'bad' : ''}">Failed wire checks: ${comp.failedChecks} ${comp.failedChecks ? '✕' : '✔'}</div>` : ''}
     </div>
-    <div class="pinned">${ro ? '<div class="msg" style="color:var(--muted);text-align:center">Archived job – read-only</div>' : `
+    <div class="pinned">${ro ? roBar(job, s) : `
       <button class="btn primary block" id="next">＋ NEXT SETUP</button>
       <div class="row3"><button class="btn" id="side" ${comp.expect === 'FS' ? '' : 'disabled'}>＋ SIDE SHOT</button><button class="btn" id="editRow" ${s.readings.length ? '' : 'disabled'}>EDIT ROW</button><button class="btn blue" id="closeBtn" ${s.readings.length ? '' : 'disabled'}>${s.type === 'site' ? 'FINISH ▶' : `CLOSE ${s.type === 'run' ? 'RUN' : 'LOOP'} ▶`}</button></div>`}</div></div>`;
   bindCommon(root);
-  $('#shareBtn').onclick = () => go(`#/j/${job.id}/s/${s.id}/share`);
+  $('#shareBtn').onclick = () => guard('PDF reports & sharing') && go(`#/j/${job.id}/s/${s.id}/share`);
+  $('#planBtn') && ($('#planBtn').onclick = () => guard('Plan sheet') && openPlan(job, s));
   $('#compact') && ($('#compact').onclick = () => { bookUI.compact = !bookUI.compact; bookScreen(job, s); });
-  $('#pegBtn') && ($('#pegBtn').onclick = () => pegSheet(job, s, () => bookScreen(job, s)));
+  $('#pegBtn') && ($('#pegBtn').onclick = () => guard('Peg correction') && pegSheet(job, s, () => bookScreen(job, s)));
+  bindRoBar(job, s);
   if (!ro) {
     $('#next').onclick = () => { entry = null; go(`#/j/${job.id}/s/${s.id}/entry`); };
     $('#side').onclick = () => { entry = null; go(`#/j/${job.id}/s/${s.id}/entry?type=IFS`); };
     $('#editRow').onclick = () => { bookUI.editHint = !bookUI.editHint; bookScreen(job, s); };
     $('#closeBtn').onclick = async () => {
-      if (s.type === 'site') { s.closed = true; touch(job, s); return go(`#/j/${job.id}/s/${s.id}/share`); }
+      if (s.type === 'site') { s.closed = true; touch(job, s); if (!PRO()) { toast('Site levels finished'); return bookScreen(job, s); } return go(`#/j/${job.id}/s/${s.id}/share`); }
       const cl = C.closure(s, comp);
       if (!cl.closedOn) { await confirmDialog({ title: 'Not closed yet', text: `The last foresight must be on ${cl.bm?.name || 'the closing BM'} to close this ${s.type}. Take an FS on ${cl.bm?.name}, then close.`, ok: 'OK', cancel: 'Back' }); return; }
       s.closed = true; touch(job, s); go(`#/j/${job.id}/s/${s.id}/close`);
@@ -682,7 +815,7 @@ const rdTxt = (v, t, w) => (w ? `${v.toFixed(3)} (T ${w.t.toFixed(3)} M ${w.m.to
 // ---------- 5. Closure ----------
 function closureScreen(job, s) {
   if (s.type === 'site') return go(`#/j/${job.id}/s/${s.id}/book`);
-  const comp = C.computeSurvey(s); const cl = C.closure(s, comp); const root = app();
+  const comp = C.computeSurvey(s); const cl = C.closure(s, comp); const root = app(); const ro = roFor(job, s);
   const method = s.adjustMethod || 'setups';
   const adj = cl.closedOn ? C.adjust(s, method, comp, cl) : [];
   const verdict = !cl.closedOn ? ['na', 'NOT CLOSED', I.x] : cl.allowable == null ? ['na', 'NO DISTANCE', I.x] : cl.pass ? ['pass', 'PASS', I.ok] : ['fail', 'FAIL', I.x];
@@ -692,7 +825,7 @@ function closureScreen(job, s) {
     <div class="scroll">
       <div class="big ${verdict[0]}" role="status">${verdict[2]}<div><div class="bw">${verdict[1]}</div><div>${cl.closedOn ? `Misclosure ${sgn(cl.misclosure)} ft · allowable ${cl.allowable == null ? (cl.distOff ? 'n/a – distances not used' : 'n/a') : '±' + cl.allowable.toFixed(3)} ft` : `Last FS must be on ${esc(cl.bm?.name || '')}`}</div></div></div>
       <div class="section-label">Peg correction</div>
-      <div class="card" style="padding:4px 16px">${pegSwitchRow(s, comp, job.archived)}</div>
+      <div class="card" style="padding:4px 16px">${pegSwitchRow(s, comp, ro)}</div>
       <div class="card" style="padding:4px 16px;margin-top:8px">${distRow(!cl.distOff, { id: 'closeDist', note: cl.distOff ? 'Off · allowable and distance adjustment not available' : '' })}</div>
       <div class="section-label">Closure</div>
       <div class="card kv">
@@ -710,41 +843,45 @@ function closureScreen(job, s) {
         <span class="k">ΣBS − ΣFS</span><span class="v">${sgn(comp.arith.diff)}</span>
         <span class="k">Last − first elev</span><span class="v">${sgn(comp.arith.delta)}</span>
         <span class="k">Arithmetic check</span><span class="v" style="color:${comp.arith.ok ? 'var(--pass)' : 'var(--err)'}">${comp.arith.ok ? '✔ PASS' : '✕ FAIL'}</span>
-        ${comp.distUsed ? `<span class="k">BS / FS distance</span><span class="v">${comp.totalBSdist} / ${comp.totalFSdist}</span>
+        ${comp.distUsed && !PRO() ? `<span class="k">Distance balance</span><span class="v">${LOCK}</span>` : comp.distUsed ? `<span class="k">BS / FS distance</span><span class="v">${comp.totalBSdist} / ${comp.totalFSdist}</span>
         <span class="k">Distance balance</span><span class="v" style="color:${bal ? 'var(--warn)' : 'inherit'}">${comp.imbalance > 0 ? '+' : ''}${comp.imbalance} ft${bal ? ' ⚠' : ' ✔'}</span>` : '<span class="k">Distances</span><span class="v" style="font-family:var(--sans)">not used</span>'}
       </div>
-      ${cl.closedOn ? `<div class="section-label">Adjusted elevations</div>
+      ${cl.closedOn && !PRO() ? `<div class="section-label">Adjusted elevations ${LOCK}</div><button class="btn block" id="adjLocked">Adjust elevations by setups or distance</button>` : cl.closedOn ? `<div class="section-label">Adjusted elevations</div>
       <div class="seg" id="adjm"><button data-v="setups" aria-pressed="${method === 'setups' || cl.distOff}">By setups</button><button data-v="distance" aria-pressed="${method === 'distance' && !cl.distOff}" ${cl.distOff ? 'disabled style="opacity:.35"' : ''}>By distance</button></div>
       ${cl.distOff ? '<div class="msg" style="font-weight:400;color:var(--muted);margin-top:6px">Distances are off for this survey, so adjustment is by setups.</div>' : ''}
       <div class="card" style="margin-top:8px;padding:8px 12px"><table class="adj"><thead><tr><th>POINT</th><th>MEASURED</th><th>CORR</th><th>ADJUSTED</th></tr></thead><tbody>
       ${adj.map((p) => `<tr><td>${esc(p.point)}${p.side ? ' <span class="tag">IFS</span>' : ''}</td><td>${C.f3(p.elev)}</td><td>${sgn(p.correction)}</td><td><b>${C.f3(p.adjusted)}</b></td></tr>`).join('')}</tbody></table>
       <div class="msg" style="color:var(--muted);font-weight:400;margin-top:8px">Correction ${sgn(-cl.misclosure)} ft distributed ${method === 'distance' && !cl.distOff ? 'in proportion to cumulative sight distance' : 'equally per setup'}; the closing BM is held at its known elevation.</div></div>` : ''}
-      <button class="btn" style="margin-top:16px;width:100%" id="reopen" ${job.archived ? 'disabled' : ''}>Reopen ${s.type} to add readings</button>
+      <button class="btn" style="margin-top:16px;width:100%" id="reopen" ${ro ? 'disabled' : ''}>Reopen ${s.type} to add readings</button>
     </div>
-    <div class="pinned"><div class="row2" style="grid-template-columns:2fr 1fr"><button class="btn primary" id="shareRep">${I.share.replace('<svg', '<svg width="22" height="22"')} SHARE REPORT</button><button class="btn" id="print">PRINT BOOK</button></div></div></div>`;
+    <div class="pinned"><div class="row2" style="grid-template-columns:2fr 1fr"><button class="btn primary" id="shareRep">${I.share.replace('<svg', '<svg width="22" height="22"')} SHARE REPORT${lockIf()}</button><button class="btn" id="print">PRINT BOOK${lockIf()}</button></div></div></div>`;
   bindCommon(root);
-  $('#shareBtn').onclick = $('#shareRep').onclick = () => go(`#/j/${job.id}/s/${s.id}/share`);
+  $('#shareBtn').onclick = $('#shareRep').onclick = () => guard('PDF reports & sharing') && go(`#/j/${job.id}/s/${s.id}/share`);
+  $('#adjLocked') && ($('#adjLocked').onclick = () => guard('Loop adjustment'));
   $$('#adjm button').forEach((b) => (b.onclick = () => { s.adjustMethod = b.dataset.v; touch(job, s); closureScreen(job, s); }));
   bindPegSwitch(job, s, () => closureScreen(job, s));
   $('#closeDist') && ($('#closeDist').onclick = () => toggleDist(job, s, () => closureScreen(job, s)));
   $('#reopen').onclick = () => { s.closed = false; touch(job, s); go(`#/j/${job.id}/s/${s.id}/book`); };
-  $('#print').onclick = () => { const doc = R.pdfReport(job, [s], includesFor(job)); openBlob(doc.output('blob'), R.fileBase(job, s) + '.pdf'); };
+  $('#print').onclick = () => { if (!guard('PDF reports')) return; const doc = R.pdfReport(job, [s], includesFor(job), planMapCache.sig === planSig(job, [s]) ? planMapCache.maps : null); openBlob(doc.output('blob'), R.fileBase(job, s) + '.pdf'); };
 }
 
 // ---------- 6. Share ----------
-const INC_DEFAULT = { table: true, checks: true, adjusted: true, threewire: false, notes: false, peg: true };
+const INC_DEFAULT = { table: true, checks: true, adjusted: true, threewire: false, notes: false, peg: true, plan: true };
 const includesFor = (job) => ({ ...INC_DEFAULT, ...(db.prefs.includes[job.id] || {}) });
-const shareUI = { fmt: 'pdf', page: 0 };
+const shareUI = { fmt: 'pdf', page: 0, maps: null };
 function shareScreen(job, s) {
+  if (!PRO()) { pendingUpgrade = 'PDF reports, CSV/text export & sharing'; return go(s ? `#/j/${job.id}/s/${s.id}/book` : `#/j/${job.id}`); }
   const surveys = s ? [s] : job.surveys; const root = app(); const inc = includesFor(job);
   const back = s ? `#/j/${job.id}/s/${s.id}/${s.closed && s.type !== 'site' ? 'close' : 'book'}` : `#/j/${job.id}`;
   const opts = [['table', 'Level book table'], ['checks', 'Checks & closure'], ['adjusted', 'Adjusted elevations'], ['threewire', 'Three-wire detail'], ['peg', 'Peg test record'], ['notes', 'Notes & warnings']];
+  const withPlan = hasPins(job, surveys); shareUI.maps = null;
+  if (withPlan) opts.push(['plan', `Plan sheet map ${P.PRO_TAG}`]);
   root.innerHTML = `<div class="screen">${topbar({ back: { href: back, label: s ? 'Back' : 'Job' }, title: 'SHARE REPORT' })}
     <div class="scroll">
       <div class="section-label">Format</div>
       <div class="seg" id="fmt"><button data-v="pdf" aria-pressed="${shareUI.fmt === 'pdf'}">PDF</button><button data-v="text" aria-pressed="${shareUI.fmt === 'text'}">Text</button><button data-v="csv" aria-pressed="${shareUI.fmt === 'csv'}">CSV</button></div>
       <div class="section-label">Include ${s ? '' : `· ${surveys.length} surveys (combined)`}</div>
-      <div class="card" style="padding:0 16px" id="inc">${opts.map(([k, l]) => `<label class="check"><input type="checkbox" data-k="${k}" ${inc[k] ? 'checked' : ''}> ${l}</label>`).join('')}</div>
+      <div class="card" style="padding:0 16px" id="inc">${opts.map(([k, l]) => `<label class="check"><input type="checkbox" data-k="${k}" ${inc[k] ? 'checked' : ''}> ${k === 'plan' ? l : esc(l)}</label>`).join('')}</div>
       <div class="section-label">Preview</div>
       <div id="preview"></div>
     </div>
@@ -756,7 +893,7 @@ function shareScreen(job, s) {
     if (shareUI.fmt === 'text') pv.innerHTML = `<div class="paperwrap"><div class="paper text"><pre>${esc(R.textReport(job, surveys))}</pre></div></div><div class="msg" style="color:var(--muted);font-weight:400;margin-top:6px">Sent as the message text – good for SMS and Teams chats.</div>`;
     else if (shareUI.fmt === 'csv') { const lines = R.csvReport(job, surveys).split('\r\n'); pv.innerHTML = `<div class="paperwrap"><div class="paper text"><pre style="font-size:8px">${esc(lines.slice(0, 40).join('\n'))}${lines.length > 40 ? '\n…' : ''}</pre></div></div>`; }
     else {
-      const pages = R.previewPages(job, surveys, inc); shareUI.page = Math.max(0, Math.min(shareUI.page, pages.length - 1));
+      const pages = R.previewPages(job, surveys, inc, shareUI.maps); shareUI.page = Math.max(0, Math.min(shareUI.page, pages.length - 1));
       pv.innerHTML = `<div class="paperwrap"><div class="paper" style="position:relative">${pages[shareUI.page]}</div></div><div class="pager"><button id="pp" aria-label="Previous page">‹</button><span>Page ${shareUI.page + 1} of ${pages.length}</span><button id="pn" aria-label="Next page">›</button></div>`;
       $('#pp').onclick = () => { shareUI.page = Math.max(0, shareUI.page - 1); draw(); };
       $('#pn').onclick = () => { shareUI.page = Math.min(pages.length - 1, shareUI.page + 1); draw(); };
@@ -768,10 +905,17 @@ function shareScreen(job, s) {
   $('#shareGo').onclick = () => { if (surveys.length) doShare(job, s, surveys); };
   $('#saveF').onclick = () => { if (!surveys.length) return; const f = buildFile(job, s, surveys); downloadBlob(f.blob, f.name); };
   draw();
+  // Plan map pages are rasterized up front so the share tap can stay synchronous (iOS share-sheet rule).
+  if (withPlan) {
+    const btns = [$('#shareGo'), $('#saveF')]; const labels = btns.map((b) => b.innerHTML);
+    btns.forEach((b) => { b.disabled = true; }); btns[0].textContent = 'PREPARING MAP…';
+    preparePlanMaps(job, surveys).then((maps) => { if (!$('#shareGo')) return; shareUI.maps = maps; btns.forEach((b, i) => { b.disabled = false; b.innerHTML = labels[i]; }); draw(); })
+      .catch((e) => { console.warn(e); btns.forEach((b, i) => { b.disabled = false; b.innerHTML = labels[i]; }); toast('Plan map could not be prepared'); });
+  }
 }
 function buildFile(job, s, surveys) {
   const base = R.fileBase(job, s); const inc = includesFor(job);
-  if (shareUI.fmt === 'pdf') return { blob: R.pdfReport(job, surveys, inc).output('blob'), name: base + '.pdf', type: 'application/pdf' };
+  if (shareUI.fmt === 'pdf') return { blob: R.pdfReport(job, surveys, inc, shareUI.maps).output('blob'), name: base + '.pdf', type: 'application/pdf' };
   if (shareUI.fmt === 'csv') return { blob: new Blob([R.csvReport(job, surveys)], { type: 'text/csv' }), name: base + '.csv', type: 'text/csv' };
   return { blob: new Blob([R.textReport(job, surveys)], { type: 'text/plain' }), name: base + '.txt', type: 'text/plain' };
 }
@@ -824,7 +968,7 @@ function setSwitch(el, on) { el.setAttribute('aria-checked', String(!!on)); }
 // "Use distance" switch row (same switch style; the row + switch give a ≥56 px tap target).
 function distRow(on, { id = 'distSw', note, locked, compact } = {}) {
   const d = note ?? (on ? 'Sight distances used for peg correction, balance checks & closure' : 'Readings used as read · no distance checks');
-  return `<div class="switchrow distrow${compact ? ' compact' : ''}"><div class="sw-l"><div class="sw-t">Use distance</div>${d ? `<div class="sw-d">${d}</div>` : ''}</div><button class="switch" id="${id}" role="switch" aria-checked="${locked ? 'true' : !!on}" aria-label="Use distance" ${locked ? 'disabled' : ''}></button></div>`;
+  return `<div class="switchrow distrow${compact ? ' compact' : ''}"><div class="sw-l"><div class="sw-t">Use distance${locked ? '' : lockIf()}</div>${d ? `<div class="sw-d">${d}</div>` : ''}</div><button class="switch" id="${id}" role="switch" aria-checked="${locked ? 'true' : !!on}" aria-label="Use distance" ${locked ? 'disabled' : ''}></button></div>`;
 }
 const pegPass = (t) => { const p = pegEval(t); return p.pass ? '<span class="chip closed">✔ within tol</span>' : '<span class="chip check">⚠ over tol</span>'; };
 function pegSetupBlock() {
@@ -847,6 +991,7 @@ function pegSwitchRow(s, comp, ro) {
     <button class="linkbtn" id="pegMore">Peg test options ›</button>`;
 }
 function togglePeg(job, s) {
+  if (!guard('Peg correction')) return;
   const latest = C.latestPeg(db.pegTests);
   if (!s.peg || !s.peg.test) { if (!latest) return toast('No peg test yet'); s.peg = { on: true, test: pegSnap(latest) }; }
   else s.peg.on = !s.peg.on;
@@ -857,7 +1002,7 @@ function bindPegSwitch(job, s, rerender) {
   const m = $('#pegMore'); if (m) m.onclick = () => pegSheet(job, s, rerender);
 }
 function pegSheet(job, s, rerender) {
-  const ro = job.archived; const comp = C.computeSurvey(s); const t = s.peg?.test; const latest = C.latestPeg(db.pegTests);
+  const ro = roFor(job, s) || !PRO(); const comp = C.computeSurvey(s); const t = s.peg?.test; const latest = C.latestPeg(db.pegTests);
   const p = t ? pegEval(t) : null; const newer = latest && (!t || latest.id !== t.id);
   const sh = sheet('Peg correction', `${pegSwitchRow(s, comp, ro)}
     ${t ? `<div class="section-label">Peg test used by this ${SHORT[s.type].toLowerCase()}</div><div class="card kv" style="font-size:15px">
@@ -882,10 +1027,10 @@ function pegListScreen(job) {
       <div class="section-label">Tests</div>
       ${tests.length ? `<div class="recent" id="pegs">${tests.map(row).join('')}</div>` : `<div class="empty">${I.peg.replace('<svg', '<svg width="64" height="64"')}<h2>No peg tests yet</h2><p>Check your level before a loop: two pegs about 200 ft apart.</p></div>`}
     </div>
-    <div class="pinned"><button class="btn primary block" id="newPeg">＋&nbsp; NEW PEG TEST</button></div></div>`;
+    <div class="pinned"><button class="btn primary block" id="newPeg">＋&nbsp; NEW PEG TEST${lockIf()}</button></div></div>`;
   bindCommon(root);
   $$('#pegs button').forEach((b) => (b.onclick = () => go(`#/j/${job.id}/peg/${b.dataset.pid}`)));
-  $('#newPeg').onclick = () => go(`#/j/${job.id}/peg/new`);
+  $('#newPeg').onclick = () => guard('Peg Test') && go(`#/j/${job.id}/peg/new`);
 }
 // Small field diagram of the two setups.
 function pegDiagram(h = 70) {
@@ -899,6 +1044,7 @@ function pegDiagram(h = 70) {
 }
 let pegDraft = null;
 function pegSetupScreen(job) {
+  if (!PRO()) { pendingUpgrade = 'Peg Test'; return go(`#/j/${job.id}/peg`); }
   const root = app(); const last = C.latestPeg(db.pegTests.filter((t) => !t.sample));
   const num = (id, v, suffix = 'ft') => `<div class="suffix" data-suffix="${suffix}"><input class="input num" id="${id}" inputmode="decimal" autocomplete="off" value="${v}"></div>`;
   const sec = (label, body) => `<div><div class="section-label">${label}</div><div class="card">${body}</div></div>`;
@@ -933,6 +1079,7 @@ function pegSetupScreen(job) {
   };
 }
 function pegEntryScreen(job) {
+  if (!PRO()) { pendingUpgrade = 'Peg Test'; return go(`#/j/${job.id}/peg`); }
   if (!pegDraft || pegDraft.jobId !== job.id) return go(`#/j/${job.id}/peg/new`);
   const root = app(); const st = pegDraft;
   root.innerHTML = `<div class="screen">
@@ -1038,6 +1185,7 @@ function pegResultScreen(job, t) {
 }
 
 function toggleDist(job, s, rerender) {
+  if (!guard('Use distance switch')) return;
   s.useDist = !C.usesDist(s); touch(job, s);
   toast(s.useDist ? 'Distances ON – whole survey recalculated' : 'Distances OFF – whole survey recalculated');
   rerender();
@@ -1049,7 +1197,7 @@ const stakeHI = (s, setupIdx) => C.stakeSurvey(s).setups[setupIdx]?.hi ?? null;
 const stakeActual = (s, k) => C.corrected(k.value, C.usesDist(s) ? k.dist ?? null : null, C.pegFor(s)).v;
 const cfText = (st) => (st.kind == null ? '—' : st.kind === 'ON GRADE' ? 'ON GRADE' : `${st.kind} ${Math.abs(st.cf).toFixed(2)}`);
 function stakeScreen(job, s) {
-  if (job.archived) return go(`#/j/${job.id}/s/${s.id}/book`);
+  if (roFor(job, s)) { if (proLocked(s)) pendingUpgrade = 'Editing Stake Out'; return go(`#/j/${job.id}/s/${s.id}/book`); }
   const setups = stakeSetups(s).length;
   if (!stakeSt || stakeSt.sid !== s.id) stakeSt = { sid: s.id, mode: setups ? 'stake' : 'bs', active: setups ? 'design' : 'reading', reading: '', dist: '', design: '', point: nextStakeName(s) };
   const root = app();
@@ -1143,33 +1291,186 @@ function stakeConfirm(job, s) {
   const num = (x) => (x === '' || x === '.' ? null : parseFloat(x));
   if (st.mode === 'bs') {
     s.readings.push({ id: uid(), type: 'BS', point: s.startBM.name, value: num(st.reading), text: st.reading, ...(C.usesDist(s) && num(st.dist) != null ? { dist: num(st.dist) } : {}) });
-    touch(job, s); Object.assign(st, { mode: 'stake', active: 'design', reading: '', dist: '' }); toast(`HI ${C.f3(stakeHI(s, stakeSetups(s).length - 1))} set`); return drawStake(job, s);
+    touch(job, s); Object.assign(st, { mode: 'stake', active: 'design', reading: '', dist: '' }); toast(`HI ${C.f3(stakeHI(s, stakeSetups(s).length - 1))} set`); drawStake(job, s);
+    return markShot(job, s, s.readings[s.readings.length - 1].id);
   }
   const k = { id: uid(), point: st.point.trim().toUpperCase(), design: num(st.design), value: num(st.reading), text: st.reading, setup: stakeSetups(s).length - 1, ...(C.usesDist(s) && num(st.dist) != null ? { dist: num(st.dist) } : {}) };
   (s.stakes = s.stakes || []).push(k); touch(job, s);
   const c = C.stakeCalc(stakeHI(s, k.setup), k.design, stakeActual(s, k), s.rodLength);
   toast(`${k.point} · ${cfText(c)}`);
   Object.assign(st, { design: '', reading: '', dist: '', active: 'design', point: nextStakeName(s) }); drawStake(job, s);
+  return markShot(job, s, k.id);
 }
 function stakeSheetScreen(job, s) {
-  const ro = job.archived; const root = app(); const L = s.rodLength || 16;
+  const ro = roFor(job, s); const root = app(); const L = s.rodLength || 16;
   const setups = stakeSetups(s);
   const ss = C.stakeSurvey(s); const rows = ss.rows.map((c, i) => ({ k: s.stakes[i], c }));
-  root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}`, label: 'Job' }, title: s.name, right: `<span class="tag">STAKE</span><button class="iconbtn" id="shareBtn" aria-label="Share stake sheet">${I.share}</button>` })}
+  root.innerHTML = `<div class="screen">${topbar({ back: { href: `#/j/${job.id}`, label: 'Job' }, title: s.name, right: `<span class="tag">STAKE</span>${PRO() ? `<button class="iconbtn planbtn" id="planBtn" aria-label="Plan sheet">${I.map}<span class="protag mini">PRO</span></button>` : ''}<button class="iconbtn" id="shareBtn" aria-label="Share stake sheet">${I.share}</button>` })}
     <div class="booktools"><div class="msg mono" style="font-size:15px">${setups.map((b, i) => `Setup ${i + 1}: BS ${esc(s.startBM.name)} ${C.fmtReading(b.value, b.text)} → HI <b>${C.f3(stakeHI(s, i))}</b>`).join('<br>') || 'No backsight yet'}</div></div>
     <div class="tablewrap"><table class="book stake"><thead><tr><th>STAKE</th><th>DESIGN</th><th>TGT</th><th>ROD</th><th>CUT/FILL</th></tr></thead><tbody>
       ${rows.map(({ k, c }) => `<tr><td>${esc(k.point)}</td><td>${C.f3(k.design)}</td><td>${C.f3(c.target)}</td><td>${C.fmtReading(k.value, k.text)}</td><td><span class="cf ${c.kind === 'CUT' ? 'cut' : c.kind === 'FILL' ? 'fill' : 'grade'}">${C.cfShort(c)}</span>${c.out ? ' <span class="wf" title="Target off the rod">⚠</span>' : ''}</td></tr>`).join('')}
     </tbody></table>${rows.length ? '' : '<div class="empty">No stakes yet. Tap + NEXT STAKE.</div>'}</div>
     <div class="summary"><div>${rows.length} stake${rows.length === 1 ? '' : 's'} · ${rows.filter((r) => r.c.kind === 'CUT').length} cut · ${rows.filter((r) => r.c.kind === 'FILL').length} fill · ground = HI − rod</div><div>Cut/fill = ground − design · rod ${L} ft · distances ${ss.distUsed ? 'used' : 'not used'}${ss.peg ? ` · peg ${C.pegLabel(ss.peg.per100)}` : ''}</div></div>
-    <div class="pinned">${ro ? '<div class="msg" style="color:var(--muted);text-align:center">Archived job – read-only</div>' : `<button class="btn primary block" id="nextStake">＋ NEXT STAKE</button>
+    <div class="pinned">${ro ? roBar(job, s) : `<button class="btn primary block" id="nextStake">＋ NEXT STAKE</button>
       <div class="row2"><button class="btn" id="newBS">NEW SETUP (BS)</button><button class="btn blue" id="finish">FINISH ▶</button></div>`}</div></div>`;
   bindCommon(root);
-  $('#shareBtn').onclick = () => go(`#/j/${job.id}/s/${s.id}/share`);
+  $('#shareBtn').onclick = () => guard('PDF reports & sharing') && go(`#/j/${job.id}/s/${s.id}/share`);
+  $('#planBtn') && ($('#planBtn').onclick = () => guard('Plan sheet') && openPlan(job, s));
   if (!ro) {
     $('#nextStake').onclick = () => { stakeSt = null; go(`#/j/${job.id}/s/${s.id}/entry`); };
     $('#newBS').onclick = () => { stakeSt = { sid: s.id, mode: 'bs', active: 'reading', reading: '', dist: '', design: '', point: nextStakeName(s) }; go(`#/j/${job.id}/s/${s.id}/entry`); };
     $('#finish').onclick = () => { s.closed = true; touch(job, s); go(`#/j/${job.id}/s/${s.id}/share`); };
   }
+  bindRoBar(job, s);
+}
+
+// ---------- Plan sheet (PRO preview) ----------
+const planList = (job) => (PRO() ? job.plans || [] : []);
+const planOn = (job, s) => PRO() && planList(job).length > 0 && s.planMark !== false;
+const PIN_COL = { BS: '#0B5FA5', FS: '#1B1D21', IFS: '#E37400', CUT: '#C5221F', FILL: '#0B5FA5', 'ON GRADE': '#1E8E3E', STK: '#5F6368' };
+const KIND_LABEL = { BS: 'Backsight', FS: 'Foresight', IFS: 'Side shot (IFS)', STK: 'Stake shot' };
+// Every pin-able shot in a survey: ref (reading/stake id) -> { point, kind, elev, order, ... }
+function shotInfo(s) {
+  const m = new Map();
+  if (s.type === 'stake') {
+    const ss = C.stakeSurvey(s); const bm = Number(s.startBM.elev);
+    s.readings.filter((r) => r.type === 'BS').forEach((r, j) => m.set(r.id, { point: s.startBM.name, kind: 'BS', elev: bm, order: j * 10000, hi: ss.setups[j]?.hi }));
+    (s.stakes || []).forEach((k, i) => { const c = ss.rows[i]; m.set(k.id, { point: k.point, kind: 'STK', elev: c.ground, order: (k.setup ?? 0) * 10000 + i + 1, stake: c }); });
+    return m;
+  }
+  const comp = C.computeSurvey(s);
+  comp.rows.forEach((row) => {
+    if (row.bsIdx != null && s.readings[row.bsIdx]) m.set(s.readings[row.bsIdx].id, { point: row.sta, kind: 'BS', elev: row.elev, order: row.bsIdx, hi: row.hi });
+    if (row.fsIdx != null && s.readings[row.fsIdx]) m.set(s.readings[row.fsIdx].id, { point: row.sta, kind: row.ifs ? 'IFS' : 'FS', elev: row.elev, order: row.fsIdx });
+  });
+  return m;
+}
+// Resolve raw pins -> numbered, labeled pins (labels: point name + elevation; stake shots add cut/fill).
+function planPins(s, raw = s.pins || []) {
+  const info = shotInfo(s);
+  const list = raw.map((p) => ({ ...p, ...info.get(p.ref) })).filter((p) => p.point != null).sort((a, b) => a.order - b.order);
+  list.forEach((p, i) => {
+    p.n = i + 1; const c = p.stake;
+    p.color = c ? PIN_COL[c.kind] || PIN_COL.STK : PIN_COL[p.kind];
+    p.kindLabel = KIND_LABEL[p.kind];
+    p.lines = [{ t: `${p.point}  ${C.f3(p.elev)}` }];
+    if (c && c.kind) p.lines.push({ t: C.cfShort(c), color: p.color });
+    p.detail = [['Shot', p.kind === 'STK' ? 'STAKE' : p.kind], ['Elevation', `${C.f3(p.elev)} ft`]];
+    if (p.hi != null) p.detail.push(['HI', `${C.f3(p.hi)} ft`]);
+    if (c) p.detail.push(['Design', `${C.f3(c.design)} ft`], ['Cut / fill', c.kind ? `${c.kind === 'ON GRADE' ? 'ON GRADE' : c.kind + ' ' + Math.abs(c.cf).toFixed(2)} ft` : '—', p.color]);
+  });
+  return list;
+}
+const planUI = { esc, sheet, confirmDialog, toast };
+function viewerStart(job, s) {
+  const plans = planList(job); const last = s && s.planLast && plans.find((p) => p.id === s.planLast.planId);
+  return last ? { planId: last.id, page: s.planLast.page || 1 } : { planId: (s && plans.find((p) => p.id === s.planId) || plans[0]).id, page: 1 };
+}
+// After a shot is saved: pop the plan, let the user tap where it was taken.
+async function markShot(job, s, ref) {
+  if (!planOn(job, s)) return;
+  const pins = planPins(s); const info = shotInfo(s).get(ref); if (!info) return;
+  if (info.kind === 'BS' && pins.some((p) => p.point === info.point)) return; // BS on a TP/BM already pinned
+  const tag = info.kind === 'STK' ? 'STAKE' : info.kind;
+  const cf = info.stake && info.stake.kind ? ` <span class="stcf ${info.stake.kind === 'CUT' ? 'cut' : info.stake.kind === 'FILL' ? 'fill' : 'grade'}">${esc(C.cfShort(info.stake))}</span>` : '';
+  const st = viewerStart(job, s); $('.snackbar')?.remove();
+  const v = P.openViewer({ mode: 'mark', title: `MARK ${tag} · ${info.point}`, sub: `<small>ELEV</small> ${C.f3(info.elev)}${cf}`, plans: planList(job), ...st, shot: { ref, kind: info.kind },
+    pins: s.pins || [], resolve: (raw) => planPins(s, raw), memKey: s.id, ui: planUI });
+  const r = await v.done;
+  if (r.action === 'done') { s.pins = r.pins; s.planLast = r.last; touch(job, s); if (r.pins.some((p) => p.ref === ref)) toast(`${info.point} marked on plan`); }
+}
+async function openPlan(job, s) {
+  if (!planList(job).length) return attachPlan(job, { then: () => openPlan(job, s) });
+  const ro = job.archived; const st = viewerStart(job, s); const n = s ? planPins(s).length : 0;
+  const v = P.openViewer({ mode: 'view', title: s ? `PLAN · ${s.name}` : `PLAN · ${job.name}`, sub: `<span id="pvSubCount">${n} pin${n === 1 ? '' : 's'}</span>`, plans: planList(job), ...st,
+    pins: s ? s.pins || [] : [], resolve: (raw) => (s ? planPins(s, raw) : []), memKey: s ? s.id : job.id, ui: planUI,
+    markOn: s ? planOn(job, s) : false, onToggleMark: s && !ro ? (on) => { s.planMark = on; touch(job, s); } : null });
+  const r = await v.done;
+  if (s && !ro && r.pins && JSON.stringify(r.pins) !== JSON.stringify(s.pins || [])) { s.pins = r.pins; s.planLast = r.last; touch(job, s); }
+}
+// File picker -> validate with pdf.js -> bytes to IndexedDB, metadata on the job.
+function attachPlan(job, { replace, then } = {}) {
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.id = 'planFile'; inp.style.display = 'none';
+  document.body.appendChild(inp);
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0]; inp.remove(); if (!f) return;
+    const mb = f.size / 1048576;
+    if (!/pdf$/i.test(f.type) && !/\.pdf$/i.test(f.name)) return toast('Pick a PDF plan sheet');
+    if (mb > P.MAX_MB) return confirmDialog({ title: 'Plan too large', text: `${f.name} is ${mb.toFixed(1)} MB. Plans up to ${P.MAX_MB} MB are supported – export just the sheets you need from the plan set.`, ok: 'OK', cancel: 'Close' });
+    if (mb > P.WARN_MB && !(await confirmDialog({ title: 'Large plan', text: `${f.name} is ${mb.toFixed(1)} MB. Big plan sets can be slow and use a lot of memory on phones. Attach anyway?`, ok: 'ATTACH', cancel: 'Cancel' }))) return;
+    toast('Reading plan…');
+    try {
+      const buf = await f.arrayBuffer(); const info = await P.inspectPdf(buf);
+      const id = replace ? replace.id : uid();
+      await P.putPdf(id, f.name, buf); P.forgetDoc(id);
+      const meta = { id, name: f.name.replace(/\.pdf$/i, ''), file: f.name, pages: info.pages, size: f.size, added: Date.now() };
+      job.plans = job.plans || [];
+      if (replace) Object.assign(replace, meta); else job.plans.push(meta);
+      touch(job); navigator.storage?.persist?.().catch(() => {});
+      toast(`${meta.name} attached · ${info.pages} page${info.pages > 1 ? 's' : ''}`);
+      then ? then(meta) : render();
+    } catch (e) { console.warn(e); confirmDialog({ title: 'Could not attach plan', text: (e && e.message) || String(e), ok: 'OK', cancel: 'Close' }); }
+  };
+  inp.click();
+}
+const fmtMB = (b) => (b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
+function planSection(job) {
+  if (!PRO()) return '';
+  const pl = planList(job); const ro = job.archived;
+  return `<div class="section-label">Plan sheets ${P.PRO_TAG}</div><div class="recent plans" id="planList">${pl.map((p) => `<button data-plan="${p.id}"><span class="planico">PDF</span><span class="rn">${esc(p.name)}</span><span class="tag">${p.pages} PG</span><span class="tag">${fmtMB(p.size || 0)}</span><span class="tag miss" hidden>⚠ MISSING</span></button>`).join('')}
+    ${ro ? '' : `<button id="attachPlan" class="attach"><span class="planico add">＋</span><span class="rn">Attach plan PDF</span></button>`}</div>`;
+}
+function bindPlanSection(job) {
+  if (!PRO()) return;
+  $('#attachPlan') && ($('#attachPlan').onclick = () => attachPlan(job));
+  $$('#planList [data-plan]').forEach((b) => {
+    const p = planList(job).find((x) => x.id === b.dataset.plan);
+    P.hasPdf(p.id).then((ok) => { if (!ok) { b.querySelector('.miss').hidden = false; b.dataset.missing = '1'; } }).catch(() => {});
+    b.onclick = () => {
+      const opts = [{ v: 'view', label: 'View plan' }];
+      if (!job.archived) opts.push({ v: 'replace', label: b.dataset.missing ? 'Re-attach PDF (missing on this device)' : 'Replace PDF' }, { v: 'remove', label: 'Remove plan' });
+      choose(p.name, opts, null, async (v) => {
+        if (v === 'view') return openPlan(job, null);
+        if (v === 'replace') return attachPlan(job, { replace: p });
+        const n = job.surveys.reduce((a, s) => a + (s.pins || []).filter((q) => q.planId === p.id).length, 0);
+        if (!(await confirmDialog({ title: 'Remove plan?', text: `${p.name} will be removed from this job${n ? ` along with ${n} pin${n > 1 ? 's' : ''}` : ''}.`, ok: 'REMOVE', danger: true }))) return;
+        job.surveys.forEach((s) => { if (s.pins) s.pins = s.pins.filter((q) => q.planId !== p.id); if (s.planLast?.planId === p.id) delete s.planLast; });
+        job.plans = job.plans.filter((x) => x.id !== p.id); touch(job); P.delPdf(p.id).catch(() => {}); render();
+      });
+    };
+  });
+}
+// Setup: "Mark shots on plan" switch (ON when the job has a plan).
+function planSetupBlock(job) {
+  const has = planList(job).length > 0;
+  return `<div class="switchrow"><div class="sw-l"><div class="sw-t">Mark shots on plan ${P.PRO_TAG}</div><div class="sw-d" id="planSwD">${has ? `After each saved shot, the plan opens so you can tap where it was taken · ${esc(planList(job).map((p) => p.name).join(', '))}` : 'Attach a plan PDF to this job to mark shots on it'}</div></div><button class="switch" id="planSw" role="switch" aria-checked="${has}" aria-label="Mark shots on plan" ${has ? '' : 'disabled'}></button></div>
+    ${has ? '' : '<button class="btn block" id="planAttach" style="margin-top:8px">＋ ATTACH PLAN PDF</button>'}`;
+}
+// Report: one combined map page per plan page that has pins (all shots, decluttered labels) + legend.
+const planMapCache = { sig: null, maps: null, busy: null };
+const planSig = (job, surveys) => JSON.stringify(surveys.map((s) => [s.id, s.updated, s.pins || []]).concat([(job.plans || []).map((p) => p.id + p.added)]));
+const hasPins = (job, surveys) => PRO() && planList(job).length > 0 && surveys.some((s) => planPins(s).length);
+async function preparePlanMaps(job, surveys) {
+  const sig = planSig(job, surveys);
+  if (planMapCache.sig === sig && planMapCache.maps) return planMapCache.maps;
+  if (planMapCache.busy && planMapCache.busy.sig === sig) return planMapCache.busy.p;
+  const p = (async () => {
+    const maps = {};
+    for (const s of surveys) {
+      const pins = planPins(s); if (!pins.length) continue; maps[s.id] = [];
+      const groups = new Map(); pins.forEach((q) => { const k = q.planId + ':' + (q.page || 1); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(q); });
+      for (const [k, list] of groups) {
+        const pl = planList(job).find((x) => x.id === list[0].planId); if (!pl) continue;
+        try {
+          const img = await P.rasterize(pl.id, list[0].page || 1, list.map((q) => ({ n: q.n, x: q.x, y: q.y, color: q.color, lines: q.lines })));
+          maps[s.id].push({ ...img, planName: pl.name, page: list[0].page || 1, pages: pl.pages, stake: s.type === 'stake',
+            legend: list.map((q) => [String(q.n), q.point, q.kind === 'STK' ? 'STAKE' : q.kind, C.f3(q.elev), q.stake ? C.f3(q.stake.design) : '', q.stake ? C.cfShort(q.stake) : ''].slice(0, s.type === 'stake' ? 6 : 4)) });
+        } catch (e) { console.warn('plan map', k, e); maps[s.id].push({ missing: true, planName: pl.name, page: list[0].page || 1 }); }
+      }
+    }
+    planMapCache.sig = sig; planMapCache.maps = maps; planMapCache.busy = null; return maps;
+  })();
+  planMapCache.busy = { sig, p }; return p;
 }
 
 // ---------- settings ----------
@@ -1177,6 +1478,9 @@ async function openSettings() {
   let persisted = null; try { persisted = await navigator.storage?.persisted?.(); } catch (e) {}
   const s = sheet('Settings', `
     <div class="section-label">Theme</div><div class="seg" id="thm"><button data-v="sunlight" aria-pressed="${db.prefs.theme !== 'dusk'}">☀ Sunlight</button><button data-v="dusk" aria-pressed="${db.prefs.theme === 'dusk'}">☾ Dusk</button></div>
+    <div class="section-label">Plan</div>${proStatusBlock()}
+    <div class="section-label">Keypad size</div><div class="seg" id="kpSize">${Object.entries(KEYPAD_SIZES).map(([v, l]) => `<button data-v="${v}" aria-pressed="${db.prefs.keypad === v}">${l}</button>`).join('')}</div>
+    <div class="msg" style="font-weight:400;color:var(--muted);margin:4px 0 0">Entry keypads. Smaller keys leave more room for the rod.</div>
     <div class="section-label">Distances</div>
     ${distRow(db.prefs.useDist, { id: 'prefDist', note: 'Default for new surveys. Each survey can still switch it.' })}
     <div class="section-label">Peg test</div>
@@ -1187,15 +1491,20 @@ async function openSettings() {
     <label class="listbtn" style="cursor:pointer">⬆ Import backup (JSON)<input type="file" id="imp" accept="application/json,.json" class="sr"></label>
     <button class="listbtn" id="persist">🔒 Keep data on this device ${persisted ? '(granted)' : persisted === false ? '(not granted)' : ''}</button>
     <button class="listbtn" id="sample">＋ Add sample job again</button>
-    <div class="section-label">Field trial</div>
+    <div class="section-label">Help</div>
+    <button class="listbtn" id="helpOpen">${I.help.replace('<svg', '<svg width="22" height="22"')} Help &amp; Manual<span class="lb-sub">User manual · works offline</span></button>
+    <div class="section-label">Feedback</div>
     <button class="listbtn" id="fbOpen">${I.chat.replace('<svg', '<svg width="22" height="22"')} Send feedback</button>
     <button class="listbtn" id="wlOpen">ⓘ Show welcome card</button>
     <div class="section-label">About</div>
-    <div class="msg" style="font-weight:400;color:var(--muted);line-height:1.5">BlueWorks Level Book v${R.APP_VERSION} (field trial) · US survey decimal feet · works offline.<br>${isIOS && !isStandalone() ? 'Install: Safari → Share → Add to Home Screen.<br>' : ''}Data is stored only on this device. Safari can clear data for sites not added to the Home Screen after ~7 days unused – export backups regularly.<br>Storage: ${persisted ? 'persistent' : 'best-effort'} · ${isStandalone() ? 'installed app' : 'browser tab'}</div>`);
+    <div class="msg" style="font-weight:400;color:var(--muted);line-height:1.5">BlueWorks Level Book v${R.APP_VERSION} · US survey decimal feet · works offline.<br>${isIOS && !isStandalone() ? 'Install: Safari → Share → Add to Home Screen.<br>' : ''}Data is stored only on this device. Safari can clear data for sites not added to the Home Screen after ~7 days unused – export backups regularly.<br>Storage: ${persisted ? 'persistent' : 'best-effort'} · ${isStandalone() ? 'installed app' : 'browser tab'}</div>`);
   $('#fbOpen', s.el).onclick = () => { s.close(); openFeedback(); };
+  $('#helpOpen', s.el).onclick = () => { s.close(); openManual(); };
   $('#wlOpen', s.el).onclick = () => { s.close(); welcomeCard(); };
-  $('#prefDist', s.el).onclick = () => { db.prefs.useDist = !db.prefs.useDist; save(); setSwitch($('#prefDist', s.el), db.prefs.useDist); toast(`New surveys: distances ${db.prefs.useDist ? 'ON' : 'OFF'}`); };
+  $('#proSee', s.el) && ($('#proSee', s.el).onclick = () => { s.close(); upgradeSheet(); });
+  $('#prefDist', s.el).onclick = () => { if (!guard('Use distance switch')) return; db.prefs.useDist = !db.prefs.useDist; save(); setSwitch($('#prefDist', s.el), db.prefs.useDist); toast(`New surveys: distances ${db.prefs.useDist ? 'ON' : 'OFF'}`); };
   $('#pegTol', s.el).onchange = (e) => { const v = parseFloat(e.target.value); if (v > 0 && v < 1) { db.prefs.pegTol = v; save(); toast(`Peg tolerance ${v} ft/100 ft`); } else { e.target.value = db.prefs.pegTol; toast('Enter a value like 0.005'); } };
+  $$('#kpSize button', s.el).forEach((b) => (b.onclick = () => { db.prefs.keypad = b.dataset.v; save(); applyKeypad(); $$('#kpSize button', s.el).forEach((x) => x.setAttribute('aria-pressed', x === b)); toast(`Keypad: ${KEYPAD_SIZES[b.dataset.v]}`); }));
   $$('#thm button', s.el).forEach((b) => (b.onclick = () => { db.prefs.theme = b.dataset.v; save(); applyTheme(); $$('#thm button', s.el).forEach((x) => x.setAttribute('aria-pressed', x === b)); }));
   $('#exp', s.el).onclick = () => {
     const blob = new Blob([JSON.stringify({ app: 'levelbook', version: R.APP_VERSION, exported: new Date().toISOString(), data: db }, null, 1)], { type: 'application/json' });
@@ -1211,6 +1520,7 @@ async function openSettings() {
       if (!ok) return;
       data.jobs.forEach((nj) => { const i = db.jobs.findIndex((x) => x.id === nj.id); if (i >= 0) db.jobs[i] = nj; else db.jobs.push(nj); });
       (data.pegTests || []).forEach((t) => { const i = db.pegTests.findIndex((x) => x.id === t.id); if (i >= 0) db.pegTests[i] = t; else db.pegTests.push(t); });
+      if (KEYPAD_SIZES[data.prefs?.keypad]) { db.prefs.keypad = data.prefs.keypad; applyKeypad(); }
       save(); render(); toast(`Imported ${data.jobs.length} job(s)`);
     } catch (err) { toast('Import failed: ' + err.message); }
   };
@@ -1221,7 +1531,7 @@ async function openSettings() {
 // ---------- boot ----------
 async function boot() {
   if (N()) { try { if (!localStorage.getItem(KEY)) { const v = await N().restore(); if (v) { localStorage.setItem(KEY, v); toast('Restored from on-device backup'); } } } catch (e) { console.warn('restore', e); } }
-  load(); applyTheme(); render();
+  load(); applyTheme(); applyKeypad(); await E.init().catch((e) => console.warn(e)); render();
   if (N()) {
     N().hideSplash();
     document.addEventListener('click', (e) => { if (e.target.closest('.keypad button, .btn.primary, .modecard, .seg button')) N().tap(); }, true);
@@ -1232,4 +1542,4 @@ async function boot() {
   }
 }
 boot();
-window.__lb = { db: () => db, C, R };
+window.__lb = { db: () => db, C, R, E, FREE_JOB_LIMIT, render: () => render(), openManual: () => openManual() };

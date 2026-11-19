@@ -4,12 +4,16 @@ Offline differential-leveling field book for phones. HTML/CSS/vanilla JS, no bui
 
 **Live app:** https://ddlawler-theonly.github.io/level-book/
 
-**Single-file version:** https://ddlawler-theonly.github.io/level-book/LevelBook.html (everything inlined in one HTML file; no service worker).
+**Version:** 1.3.0
+
+**Single-file version (older v1.2.1, no plan sheet / Pro features):** https://ddlawler-theonly.github.io/level-book/LevelBook.html (everything inlined in one HTML file; no service worker).
 
 ## Docs
 
-- **User manual (PDF, 35 pages):** https://ddlawler-theonly.github.io/level-book/docs/LevelBook-Manual.pdf
+- **User manual (PDF, 43 pages; also built into the app under Help & Manual):** https://ddlawler-theonly.github.io/level-book/docs/LevelBook-Manual.pdf
 - **Field-trial tester sheet (PDF, 1 page, QR + install + what to try):** https://ddlawler-theonly.github.io/level-book/docs/LevelBook-Tester-Sheet.pdf
+- **Privacy policy:** https://ddlawler-theonly.github.io/level-book/privacy.html
+- **Support:** https://ddlawler-theonly.github.io/level-book/support.html
 - **QR code to the app (SVG):** https://ddlawler-theonly.github.io/level-book/docs/LevelBook-QR.svg
 
 ## Install on iPhone

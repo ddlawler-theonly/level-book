@@ -1,6 +1,6 @@
 // Report builders: model -> plain text, CSV, PDF (jsPDF, vendored), HTML preview pages.
 import * as C from './calc.js';
-export const APP_VERSION = '1.2.1';
+export const APP_VERSION = '1.3.0';
 
 const TYPE = { loop: 'Level Loop', run: 'Level Run', site: 'Site Levels', stake: 'Stake Out' };
 export const usDate = (iso) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${m}/${d}/${y}`; };
@@ -175,7 +175,7 @@ export function csvReport(job, surveys) {
 // ---- PDF (jsPDF + AutoTable, loaded from /vendor as globals) ----
 const winAnsi = (s) => String(s ?? '').replace(/ft√mi/g, 'ft*sqrt(mi)').replace(/mm√km/g, 'mm*sqrt(km)').replace(/±/g, '+').replace(/Σ/g, 'Sum ').replace(/Δ/g, 'd').replace(/✔/g, 'OK').replace(/✕/g, 'X').replace(/⚠/g, '!').replace(/√/g, 'sqrt').replace(/→/g, '->').replace(/·/g, '-').replace(/−/g, '-').replace(/±/g, '+/-').replace(/[^\x00-\xFF–—]/g, '?');
 
-export function pdfReport(job, surveys, inc) {
+export function pdfReport(job, surveys, inc, planMaps) {
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'pt', format: 'letter' });
   const W = doc.internal.pageSize.getWidth(); const M = 40;
@@ -231,19 +231,62 @@ export function pdfReport(job, surveys, inc) {
       if (m.adj) block(`FINAL ELEVATIONS (adjusted by ${s.adjustMethod === 'distance' ? 'distance' : 'setups'})`, [['Point', 'Measured / Corr / ADJUSTED'], ...m.adj.map((p) => [p.point + (p.side ? ' (IFS)' : ''), `${C.f3(p.elev)}  ${sgn(p.correction)}  ${C.f3(p.adjusted)}`])]);
       else block('ELEVATIONS (unadjusted – not closed)', m.comp.pointElev.map((p) => [p.point + (p.side ? ' (IFS)' : ''), C.f3(p.elev)]));
     }
+    if (inc.plan !== false && planMaps && planMaps[s.id]) planMaps[s.id].forEach((mp) => planMapPage(doc, job, s, mp));
   });
-  const n = doc.getNumberOfPages(); const H = doc.internal.pageSize.getHeight(); const st = winAnsi(stamp());
+  const n = doc.getNumberOfPages(); const st = winAnsi(stamp());
   for (let i = 1; i <= n; i++) {
-    doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(90);
+    doc.setPage(i); const W = doc.internal.pageSize.getWidth(); const H = doc.internal.pageSize.getHeight();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(90);
     doc.text(winAnsi(`Generated ${st} - BlueWorks Level Book v${APP_VERSION} - US survey feet`), M, H - 24);
     doc.text(`Page ${i} of ${n}`, W - M, H - 24, { align: 'right' }); doc.setTextColor(0);
   }
   return doc;
 }
 
+
+// ---- Plan sheet map page (PRO): one landscape page per plan page, all pins on one image + legend ----
+export const PLAN_LEGEND_HEAD = (stake) => (stake ? ['#', 'POINT', 'SHOT', 'GROUND', 'DESIGN', 'CUT/FILL'] : ['#', 'POINT', 'SHOT', 'ELEV']);
+const cfCol = (t) => (String(t).startsWith('C') ? [197, 34, 31] : String(t).startsWith('F') ? [11, 95, 165] : [30, 142, 62]);
+function planMapPage(doc, job, s, mp) {
+  doc.addPage('letter', 'landscape');
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), M = 36;
+  const title = (cont) => {
+    let y = M; doc.setFont('helvetica', 'bold'); doc.setFontSize(14); doc.setTextColor(0);
+    doc.text(winAnsi(`PLAN SHEET MAP${cont ? ' – PIN LEGEND' : ''} – ${s.name}`), M, y);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.text(winAnsi(`${job.name} · ${mp.planName} · page ${mp.page}${mp.pages ? ' of ' + mp.pages : ''} · ${mp.legend ? mp.legend.length : 0} shots marked`), W - M, y, { align: 'right' });
+    y += 7; doc.setDrawColor(255, 196, 0); doc.setLineWidth(3); doc.line(M, y, W - M, y); return y + 12;
+  };
+  let y = title(false);
+  if (mp.missing) { doc.setFontSize(11); doc.setTextColor(197, 34, 31); doc.text(winAnsi('Plan PDF not on this device – pins listed below without the plan image.'), M, y + 10); doc.setTextColor(0); y += 24; }
+  const rows = mp.legend || []; const ROW = 14; const NC = rows.length > 4 ? 2 : 1; const below = rows.length <= 12; /* >12 shots: map gets the whole page, legend follows */ const perCol = (avail) => Math.max(1, Math.floor((avail - 30) / ROW)); // 30 = legend title + head
+  // image gets at least ~55% of the page height; legend in two columns underneath
+  const bottom = H - 44; let firstRows = rows.length;
+  if (!mp.missing) {
+    const want = rows.length && below ? Math.ceil(rows.length / NC) * ROW + 30 + 16 : 0; const imgMaxH = bottom - y - want;
+    const sc = Math.min((W - 2 * M) / mp.w, imgMaxH / mp.h); const iw = mp.w * sc, ih = mp.h * sc; const ix = (W - iw) / 2;
+    doc.addImage(mp.dataUrl, 'JPEG', ix, y, iw, ih, undefined, 'FAST'); doc.setDrawColor(120); doc.setLineWidth(0.6); doc.rect(ix, y, iw, ih);
+    y += ih + 12; firstRows = below ? Math.min(rows.length, perCol(bottom - y) * NC) : 0;
+  }
+  const legend = (chunk, y0, cap) => {
+    const half = Math.ceil(chunk.length / 2); const cols = chunk.length > Math.min(4, cap) ? [chunk.slice(0, half), chunk.slice(half)] : [chunk];
+    const cw = (W - 2 * M - 16) / 2;
+    cols.forEach((c, ci) => doc.autoTable({ startY: y0, head: [PLAN_LEGEND_HEAD(mp.stake)], body: c.map((r) => r.map(winAnsi)), margin: { left: M + ci * (cw + 16), right: W - (M + ci * (cw + 16) + cw), bottom: 30 }, tableWidth: cw, theme: 'plain', pageBreak: 'avoid',
+      styles: { font: 'courier', fontSize: 8, cellPadding: 2.2, halign: 'right', textColor: 20 }, headStyles: { font: 'helvetica', fontStyle: 'bold', fillColor: [228, 228, 222], halign: 'right' },
+      alternateRowStyles: { fillColor: [239, 239, 234] }, columnStyles: { 0: { halign: 'center', fontStyle: 'bold', cellWidth: 24 }, 1: { halign: 'left', font: 'helvetica', fontStyle: 'bold' }, 2: { halign: 'left', font: 'helvetica' } },
+      didParseCell: (d) => { if (d.section === 'head' && d.column.index <= 2) d.cell.styles.halign = d.column.index ? 'left' : 'center'; if (d.section === 'body' && mp.stake && d.column.index === 5) { d.cell.styles.fontStyle = 'bold'; d.cell.styles.textColor = cfCol(d.cell.raw); } } }));
+  };
+  if (rows.length) {
+    const addPage = doc.addPage; doc.addPage = function () { return addPage.call(this, 'letter', 'landscape'); }; // any autoTable overflow stays landscape
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); if (firstRows) { doc.text('PIN LEGEND', M, y + 2); legend(rows.slice(0, firstRows), y + 6, perCol(bottom - y)); }
+    let rest = rows.slice(firstRows);
+    while (rest.length) { doc.addPage(); const y2 = title(true); const n = perCol(bottom - y2 + 14) * 2; legend(rest.slice(0, n), y2, n / 2); rest = rest.slice(n); }
+    doc.addPage = addPage;
+  }
+}
+
 // ---- HTML preview pages (approximate letter pagination) ----
 const e = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-export function previewPages(job, surveys, inc) {
+export function previewPages(job, surveys, inc, planMaps) {
   const PAGE_LINES = 54; const pages = []; let cur = []; let lines = 0;
   const push = (html, n) => { if (lines + n > PAGE_LINES && cur.length) { pages.push(cur.join('')); cur = []; lines = 0; } cur.push(html); lines += n; };
   surveys.forEach((s, si) => {
@@ -276,6 +319,13 @@ export function previewPages(job, surveys, inc) {
       if (m.adj) block(`FINAL ELEVATIONS (adjusted by ${s.adjustMethod === 'distance' ? 'distance' : 'setups'})`, [['Point', 'Measured / Corr / ADJUSTED'], ...m.adj.map((p) => [p.point + (p.side ? ' (IFS)' : ''), `${C.f3(p.elev)}  ${sgn(p.correction)}  ${C.f3(p.adjusted)}`])]);
       else block('ELEVATIONS (unadjusted – not closed)', m.comp.pointElev.map((p) => [p.point + (p.side ? ' (IFS)' : ''), C.f3(p.elev)]));
     }
+    if (inc.plan !== false && planMaps && planMaps[s.id]) planMaps[s.id].forEach((mp) => {
+      if (cur.length) { pages.push(cur.join('')); cur = []; lines = 0; }
+      const head = PLAN_LEGEND_HEAD(mp.stake); const L = mp.legend || []; const half = Math.ceil(L.length / 2); const cols = L.length > 6 ? [L.slice(0, half), L.slice(half)] : [L];
+      const col = (t) => (String(t).startsWith('C') ? '#C5221F' : String(t).startsWith('F') ? '#0B5FA5' : '#1E8E3E');
+      const tbl = (rows) => `<table style="flex:1"><tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>${rows.map((r) => `<tr>${r.map((x, i) => `<td style="${i === 1 ? 'text-align:left;font-weight:700;font-family:Helvetica' : i === 2 ? 'text-align:left;font-family:Helvetica' : i === 0 ? 'text-align:center;font-weight:700' : ''}${mp.stake && i === 5 ? `;font-weight:800;color:${col(x)}` : ''}">${e(x)}</td>`).join('')}</tr>`).join('')}</table>`;
+      pages.push(`<div class="planmap"><h3>PLAN SHEET MAP – ${e(s.name)}</h3><div style="font-size:7.5px;color:#444">${e(job.name)} · ${e(mp.planName)} · page ${mp.page} · ${L.length} shots marked</div><div style="height:2px;background:#FFC400;margin:2px 0 4px"></div>${mp.missing ? '<div class="inprog">Plan PDF not on this device</div>' : `<img src="${mp.dataUrl}" alt="Marked-up plan" style="width:100%;display:block;border:1px solid #999">`}<h4>PIN LEGEND</h4><div style="display:flex;gap:8px;align-items:flex-start">${cols.map(tbl).join('')}</div></div>`);
+    });
   });
   if (cur.length) pages.push(cur.join(''));
   const st = stamp();
