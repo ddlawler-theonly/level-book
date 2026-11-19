@@ -3,6 +3,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 import * as C from './js/calc.js';
 import * as R from './js/report.js';
 import { seedJobs, seedPegTests, seedStake, surveyDefaults, uid } from './js/seed.js';
@@ -10,7 +12,9 @@ import { seedJobs, seedPegTests, seedStake, surveyDefaults, uid } from './js/see
 const require = createRequire(import.meta.url);
 const jspdf = require('./vendor/jspdf.umd.min.js');
 globalThis.window = globalThis.window || {}; window.jspdf = jspdf;
-const at = require('jspdf-autotable'); (at.applyPlugin || at.default?.applyPlugin)?.(jspdf.jsPDF);
+// vendored AutoTable UMD, run as a browser global (no npm dependency)
+globalThis.jspdf = jspdf; vm.runInThisContext(readFileSync(new URL('./vendor/jspdf.plugin.autotable.min.js', import.meta.url), 'utf8'));
+assert.equal(typeof new jspdf.jsPDF().autoTable, 'function', 'AutoTable plugin loaded');
 
 const INC = { table: true, checks: true, adjusted: true, threewire: true, peg: true, notes: true };
 const strip = (s) => { const c = JSON.parse(JSON.stringify(s)); delete c.id; delete c.updated; delete c.imported; return c; };
