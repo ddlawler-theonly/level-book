@@ -56,6 +56,49 @@ export function pegLines(t, p = C.pegTest(t)) {
 export const reportTitle = (job, s) => `BlueWorks Level Book – ${job.name}${s ? ' – ' + s.name : ''} – ${usDate(job.date)}`;
 export const fileBase = (job, s) => ['BlueWorks-LevelBook', job.name, s ? s.name : 'Job', (job.date || '').replace(/-/g, '')].join('_').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-');
 
+// ---- Embedded survey data (report import) ----
+// Every PDF carries the full survey data, invisibly, in the PDF's XMP metadata stream:
+//   LBDATA1:<base64 of UTF-8 JSON>:<FNV-1a hash of the base64>:LBEND
+// Importing the PDF (Jobs screen or inside a job) rebuilds the surveys exactly.
+export const EMBED_FORMAT = 1;
+const EMBED_HEAD = 'LBDATA1:'; const EMBED_END = ':LBEND';
+const fnv = (str) => { let h = 0x811c9dc5; for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; } return h.toString(16).padStart(8, '0'); };
+const b64enc = (str) => { const u = new TextEncoder().encode(str); let bin = ''; for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(bin); };
+const b64dec = (b64) => { const bin = atob(b64); const u = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return new TextDecoder().decode(u); };
+const PLAN_KEYS = ['pins', 'planLast', 'planId', 'planMark']; // plan PDFs are not embedded, so plan pins are dropped
+export function embedData(job, surveys) {
+  const clean = (s) => { const c = JSON.parse(JSON.stringify(s)); PLAN_KEYS.forEach((k) => delete c[k]); return c; };
+  return { kind: 'blueworks-levelbook-report', format: EMBED_FORMAT, appVersion: APP_VERSION, exported: new Date().toISOString(),
+    job: { id: job.id, name: job.name, date: job.date || '', description: job.description || '', client: job.client || '' }, surveys: surveys.map(clean) };
+}
+export function embedString(job, surveys) { const b = b64enc(JSON.stringify(embedData(job, surveys))); return `${EMBED_HEAD}${b}:${fnv(b)}${EMBED_END}`; }
+// Find embedded data in text (raw PDF bytes as latin1, or an XMP/metadata string).
+// Returns { data } or { error: 'none' | 'corrupt' | 'newer' }.
+export function parseEmbedded(text) {
+  const str = String(text || ''); const i = str.lastIndexOf(EMBED_HEAD); if (i < 0) return { error: 'none' };
+  const j = str.indexOf(EMBED_END, i); if (j < 0) return { error: 'corrupt' };
+  const body = str.slice(i + EMBED_HEAD.length, j).replace(/\s+/g, ''); const k = body.lastIndexOf(':');
+  const b = body.slice(0, k), h = body.slice(k + 1);
+  if (k < 0 || fnv(b) !== h) return { error: 'corrupt' };
+  let data; try { data = JSON.parse(b64dec(b)); } catch (e) { return { error: 'corrupt' }; }
+  if (!data || data.kind !== 'blueworks-levelbook-report' || !Array.isArray(data.surveys)) return { error: 'corrupt' };
+  if (data.format > EMBED_FORMAT) return { error: 'newer', data };
+  return { data };
+}
+export function extractEmbedded(bytes) {
+  const u = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const isPdf = u.length > 4 && String.fromCharCode(u[0], u[1], u[2], u[3]) === '%PDF';
+  const r = parseEmbedded(new TextDecoder('latin1').decode(u));
+  return { ...r, isPdf };
+}
+
+// Three-wire running distance totals (one row per BS / FS).
+export const DIST_HEAD = ['SETUP', 'SHOT', 'POINT', 'DIST', 'SUM BS', 'SUM FS', 'BALANCE', 'TOTAL'];
+const signed1 = (v) => (v > 0 ? '+' : v < 0 ? '−' : '±') + Math.abs(v).toFixed(1);
+export const distTotalRows = (m) => C.distTotals(m.s, m.comp).rows.map((r) => [String(r.setup ?? ''), r.type, r.point, r.d == null ? '—' : r.d.toFixed(1), r.cumBS.toFixed(1), r.cumFS.toFixed(1), signed1(r.bal), r.total.toFixed(1)]);
+export const distTotalsTitle = (m) => `THREE-WIRE DISTANCE TOTALS (ft${m.comp.distUsed ? '' : ' – recorded, not used'})`;
+const showDistTotals = (m, inc) => m.three && inc.threewire && !m.stake && m.s.readings.length > 0;
+
 function tableRows(m, inc) {
   const { comp, s, three } = m; const out = [];
   comp.rows.forEach((r) => {
@@ -82,7 +125,7 @@ function checksLines(m) {
   L.push(['Sum BS / Sum FS', `${comp.sumBS.toFixed(3)} / ${comp.sumFS.toFixed(3)}`]);
   L.push(['Arithmetic check', `${sgn(comp.arith.diff)} vs ${sgn(comp.arith.delta)} ${comp.arith.ok ? 'PASS' : 'FAIL'}`]);
   L.push(['BS / FS distance', `${comp.totalBSdist} / ${comp.totalFSdist} ft (imbalance ${comp.imbalance} ft)`]);
-  if (three) L.push(['Three-wire checks failed', String(comp.failedChecks)]);
+  if (three) { const t = C.distTotals(s, comp); L.push(['Three-wire checks failed', String(comp.failedChecks)]); L.push(['3-wire dist totals', `Sum BS ${t.cumBS.toFixed(1)} / Sum FS ${t.cumFS.toFixed(1)} ft · balance ${signed1(t.bal)} · total ${t.total.toFixed(1)} ft${comp.distUsed ? '' : ' (not used)'}`]); }
   if (!isSite) L.push(['Peg correction', pegStatus(m)]);
   if (!isSite) {
     L.push(['Closed on', cl.closedOn ? `${cl.bm.name}` : 'NOT CLOSED']);
@@ -132,6 +175,7 @@ export function textReport(job, surveys) {
       return;
     }
     out.push(`ΣBS ${m.comp.sumBS.toFixed(3)}  ΣFS ${m.comp.sumFS.toFixed(3)}  Arith ${m.comp.arith.ok ? 'PASS ✔' : 'FAIL ✕'}`);
+    if (m.three) { const t = C.distTotals(s, m.comp); out.push(`3-wire dist ΣBS ${t.cumBS.toFixed(1)}  ΣFS ${t.cumFS.toFixed(1)}  bal ${signed1(t.bal)}  total ${t.total.toFixed(1)} ft${m.comp.distUsed ? '' : ' (not used)'}`); }
     if (m.cl && m.cl.closedOn) {
       out.push(`Closed on ${m.cl.bm.name}: misclose ${sgn(m.cl.misclosure)} ft`);
       out.push(`Allow ${m.cl.allowable == null ? 'n/a' : m.cl.allowable.toFixed(3)} ft (${m.cl.feet} ft) → ${m.cl.allowable == null ? 'NO DIST' : m.cl.pass ? 'PASS ✔' : 'FAIL ✕'}`);
@@ -168,6 +212,8 @@ export function csvReport(job, surveys) {
     });
   });
   if (stakeOut.length) lines.push([], ['Survey', 'Stake #', 'Setup', 'Point', 'HI', 'Design', 'Target rod', 'Actual rod', 'Dist ft', 'Peg corr', 'Ground', 'Cut/Fill', 'Amount ft', 'Notes'], ...stakeOut);
+  const distOut = []; surveys.forEach((s) => { const m = surveyModel(job, s); if (m.three && s.readings.length) distTotalRows(m).forEach((r) => distOut.push([s.name, ...r.map((x) => String(x).replace('−', '-').replace('±', ''))])); });
+  if (distOut.length) lines.push([], ['Survey', 'Setup', 'Shot', 'Point', 'Dist ft', 'Sum BS ft', 'Sum FS ft', 'Balance ft', 'Total ft'], ...distOut);
   if (pegRows.length) lines.push([], ['Survey', 'Peg test', 'Value'], ...pegRows);
   return lines.map((l) => l.map(csvCell).join(',')).join('\r\n');
 }
@@ -224,6 +270,15 @@ export function pdfReport(job, surveys, inc, planMaps) {
         didParseCell: (d) => { const t = String(d.cell.raw || ''); if (d.column.index === 1 && /\bFAIL\b|NOT CLOSED/.test(t)) d.cell.styles.textColor = [197, 34, 31]; else if (d.column.index === 1 && /\bPASS\b/.test(t)) d.cell.styles.textColor = [30, 142, 62]; } });
       y = doc.lastAutoTable.finalY + 14;
     };
+    if (showDistTotals(m, inc)) {
+      if (y > doc.internal.pageSize.getHeight() - 120) { doc.addPage(); y = M; }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(winAnsi(distTotalsTitle(m)), M, y); y += 4;
+      doc.autoTable({ startY: y, head: [DIST_HEAD], body: distTotalRows(m).map((r) => r.map(winAnsi)), margin: { left: M, right: M, bottom: 50 }, theme: 'plain',
+        styles: { font: 'courier', fontSize: 8, cellPadding: 2.5, halign: 'right', textColor: 20 }, headStyles: { font: 'helvetica', fontStyle: 'bold', fillColor: [228, 228, 222], halign: 'right' },
+        alternateRowStyles: { fillColor: [239, 239, 234] }, columnStyles: { 1: { halign: 'center' }, 2: { halign: 'left', font: 'helvetica' } },
+        didParseCell: (d) => { if (d.section === 'head' && d.column.index === 2) d.cell.styles.halign = 'left'; if (d.section === 'head' && d.column.index === 1) d.cell.styles.halign = 'center'; } });
+      y = doc.lastAutoTable.finalY + 14;
+    }
     if (m.stake) block('SETUPS & SUMMARY', stakeLines(m));
     else if (inc.checks) { const c = checksLines(m); block('CHECKS & CLOSURE', c.lines); if (c.warns.length && inc.notes) block('WARNINGS', c.warns.map((w) => ['!', w])); }
     if (m.pegT && inc.peg !== false) block(`PEG TEST RECORD (${m.pegOn ? 'applied' : 'not applied'})`, pegLines(m.pegT, m.peg));
@@ -233,6 +288,9 @@ export function pdfReport(job, surveys, inc, planMaps) {
     }
     if (inc.plan !== false && planMaps && planMaps[s.id]) planMaps[s.id].forEach((mp) => planMapPage(doc, job, s, mp));
   });
+  // Invisible: full survey data for re-import (XMP metadata stream; nothing drawn on the page).
+  doc.setProperties({ title: winAnsi(reportTitle(job, surveys.length === 1 ? surveys[0] : null)), subject: 'BlueWorks Level Book report - survey data embedded (import this PDF in Level Book to rebuild the surveys)', creator: `BlueWorks Level Book v${APP_VERSION}` });
+  doc.addMetadata(embedString(job, surveys), 'https://ddlawler-theonly.github.io/level-book/ns/report/1/');
   const n = doc.getNumberOfPages(); const st = winAnsi(stamp());
   for (let i = 1; i <= n; i++) {
     doc.setPage(i); const W = doc.internal.pageSize.getWidth(); const H = doc.internal.pageSize.getHeight();
@@ -312,6 +370,7 @@ export function previewPages(job, surveys, inc, planMaps) {
       if (m.pegOn) push('<div style="font-style:italic;font-size:7px;color:#444">BS/FS as booked; HI and ELEV use peg-corrected readings (reading − C × dist). n/d = no distance.</div>', 1);
     }
     const block = (t, L) => push(`<h4>${e(t)}</h4><table>${L.map(([k, v]) => `<tr><td style="text-align:left;font-family:Helvetica;font-weight:700;width:38%">${e(k)}</td><td style="text-align:left;${/\bFAIL\b|NOT CLOSED/.test(v) ? 'color:#C5221F;font-weight:700' : /\bPASS\b/.test(v) ? 'color:#1E8E3E;font-weight:700' : ''}">${e(v)}</td></tr>`).join('')}</table>`, L.length + 2);
+    if (showDistTotals(m, inc)) { const R = distTotalRows(m); push(`<h4>${e(distTotalsTitle(m))}</h4><table><tr>${DIST_HEAD.map((h) => `<th>${h}</th>`).join('')}</tr>${R.map((r) => `<tr>${r.map((x, i) => `<td style="${i === 2 ? 'text-align:left;font-family:Helvetica' : i === 1 ? 'text-align:center' : ''}">${e(x)}</td>`).join('')}</tr>`).join('')}</table>`, R.length + 3); }
     if (m.stake) block('SETUPS & SUMMARY', stakeLines(m));
     else if (inc.checks) { const c = checksLines(m); block('CHECKS & CLOSURE', c.lines); if (c.warns.length && inc.notes) block('WARNINGS', c.warns.map((w) => ['⚠', w])); }
     if (m.pegT && inc.peg !== false) block(`PEG TEST RECORD (${m.pegOn ? 'applied' : 'not applied'})`, pegLines(m.pegT, m.peg));

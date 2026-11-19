@@ -374,12 +374,13 @@ function jobsScreen() {
       <button class="btn" id="sortBtn">Sort: ${{ date: 'Date', name: 'Name', edited: 'Edited' }[jobsUI.sort]} ▾</button></div>
       <div class="jobs-list" id="list"></div>
     </div>
-    <div class="pinned"><button class="btn primary block" id="newJob">＋&nbsp; NEW JOB</button></div></div>`;
+    <div class="pinned"><div class="row2 improw"><button class="btn" id="impReport" aria-label="Import a PDF report">⬆&nbsp; IMPORT PDF</button><button class="btn primary" id="newJob">＋&nbsp; NEW JOB</button></div></div></div>`;
   bindCommon(root);
   $('#q').oninput = (e) => { jobsUI.q = e.target.value; drawList(); };
   $$('#tabs button').forEach((b) => (b.onclick = () => { jobsUI.tab = b.dataset.v; jobsScreen(); }));
   $('#sortBtn').onclick = () => choose('Sort jobs', [{ v: 'date', label: 'Project date' }, { v: 'name', label: 'Name' }, { v: 'edited', label: 'Last edited' }], jobsUI.sort, (v) => { jobsUI.sort = v; jobsScreen(); });
   $('#newJob').onclick = () => (canAddJob() ? jobSheet() : jobLimitSheet());
+  $('#impReport').onclick = () => (canAddJob() ? importReport(null) : jobLimitSheet());
   drawList();
   if (!db.prefs.welcomed) welcomeCard();
 }
@@ -472,6 +473,64 @@ function jobSheet(job) {
   };
 }
 
+// ---------- Report import: rebuild surveys from the data embedded in a Level Book PDF ----------
+function infoDialog(title, text, ok = 'OK') {
+  return new Promise((res) => { const d = overlay(`<div class="dialog" role="alertdialog"><h2>${esc(title)}</h2><p>${esc(text)}</p><button class="btn primary block" data-ok>${esc(ok)}</button></div>`, { dialog: true, onClose: () => res() }); $('[data-ok]', d.el).onclick = () => { d.el.remove(); res(); }; });
+}
+function pickPdfFile() {
+  return new Promise((res) => {
+    const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'application/pdf,.pdf'; inp.className = 'sr'; inp.id = 'impPdfInput';
+    inp.onchange = () => { const f = inp.files && inp.files[0]; inp.remove(); res(f || null); };
+    document.body.appendChild(inp); inp.click();
+  });
+}
+async function readReportData(buf) {
+  const u = new Uint8Array(buf); let r = R.extractEmbedded(u);
+  if (r.error === 'none' && r.isPdf) { // PDF re-saved by another app (compressed streams): ask pdf.js for the XMP metadata
+    try { const lib = await P.pdfjs(); const d = await lib.getDocument({ data: u.slice(), isEvalSupported: false }).promise; const md = await d.getMetadata().catch(() => null); d.destroy();
+      const r2 = R.parseEmbedded(`${md?.metadata?.getRaw?.() || ''} ${md?.info?.Subject || ''}`); if (r2.error !== 'none') r = { ...r2, isPdf: true };
+    } catch (e) { console.warn('pdf.js metadata read failed', e); }
+  }
+  return r;
+}
+const IMPORT_MSG = {
+  notpdf: (n) => [`Not a PDF`, `${n} isn’t a PDF. Pick a PDF report that BlueWorks Level Book made.`],
+  none: (n) => ['No survey data in this PDF', `${n} doesn’t have Level Book survey data inside, so it can’t be rebuilt. Older reports (made before import was added) and PDFs from other apps don’t carry it. Open the job on the phone that made it and share a fresh PDF.`],
+  corrupt: (n) => ['Can’t read the survey data', `The survey data inside ${n} is damaged or incomplete. Try the original PDF again, or share a fresh one from the phone that made it.`],
+  newer: (n) => ['Update Level Book', `${n} was made by a newer version of Level Book. Update the app, then import it again.`],
+};
+// Turn embedded data into app objects. Survey ids are new so an import never overwrites an existing survey.
+function importedSurveys(data, fileName) {
+  const at = Date.now();
+  return data.surveys.map((src) => { const s = JSON.parse(JSON.stringify(src)); s.id = uid(); s.updated = at; s.imported = { at, file: fileName || '', from: src.id || null, appVersion: data.appVersion || '' }; if (!Array.isArray(s.readings)) s.readings = []; return s; });
+}
+const importSummary = (list) => list.map((s) => `${s.name} – ${s.type === 'stake' ? `${(s.stakes || []).length} stake${(s.stakes || []).length === 1 ? '' : 's'}` : `${s.readings.length} reading${s.readings.length === 1 ? '' : 's'}`}${s.closed ? ', closed' : ', open'}`).join('\n');
+async function importReport(job) {
+  const f = await pickPdfFile(); if (!f) return;
+  return importReportFile(job, f.name, await f.arrayBuffer());
+}
+async function importReportFile(job, name, buf) {
+  let r; try { r = await readReportData(buf); } catch (e) { return infoDialog(...IMPORT_MSG.corrupt(name)); }
+  if (!r.isPdf && r.error) return infoDialog(...IMPORT_MSG.notpdf(name));
+  if (r.error) return infoDialog(...IMPORT_MSG[r.error](name));
+  const data = r.data; const list = importedSurveys(data, name);
+  if (!list.length) return infoDialog(...IMPORT_MSG.none(name));
+  if (job) { // into the open job
+    if (job.archived) return toast('Archived jobs are read-only');
+    const ok = await confirmDialog({ title: `Import into ${job.name}?`, text: `${list.length} survey${list.length === 1 ? '' : 's'} from ${name}${data.job?.name && data.job.name !== job.name ? ` (job “${data.job.name}”)` : ''}:\n${importSummary(list)}`, ok: 'Import' });
+    if (!ok) return;
+    job.surveys.push(...list); touch(job); toast(`Imported ${list.length} survey${list.length === 1 ? '' : 's'}`);
+    return go(list.length === 1 ? `#/j/${job.id}/s/${list[0].id}/book` : `#/j/${job.id}`);
+  }
+  if (!canAddJob()) return jobLimitSheet();
+  const src = data.job || {}; const dup = db.jobs.some((j) => j.id === src.id || (j.name === src.name && j.date === src.date));
+  const ok = await confirmDialog({ title: 'Import report?', text: `New job “${src.name || 'Imported job'}”${dup ? ' (you already have a job like this – the import is added as a separate copy)' : ''} with ${list.length} survey${list.length === 1 ? '' : 's'}:\n${importSummary(list)}`, ok: 'Import' });
+  if (!ok) return;
+  const now = Date.now();
+  const nj = { id: db.jobs.some((j) => j.id === src.id) || !src.id ? uid() : src.id, name: src.name || 'Imported job', date: src.date || todayISO(), description: src.description || '', client: src.client || '', archived: false, created: now, updated: now, imported: { at: now, file: name }, surveys: list };
+  db.jobs.push(nj); save(); toast(`Imported ${nj.name}`); go(`#/j/${nj.id}`);
+}
+
 // ---------- 1. Main menu ----------
 function menuScreen(job) {
   const ro = job.archived; const root = app();
@@ -484,6 +543,7 @@ function menuScreen(job) {
       ${planSection(job)}
       <div class="section-label">Recent</div>
       ${surveys.length ? `<div class="recent">${surveys.map((s) => `<button data-sid="${s.id}"><span class="rn">${esc(s.name)}</span><span class="tag">${SHORT[s.type].toUpperCase()}</span>${s.method === 'three' && s.type !== 'site' ? '<span class="tag blue">3-WIRE</span>' : ''}${proLocked(s) ? '<span class="tag">READ-ONLY</span>' : ''}${statusChip(s)}</button>`).join('')}</div>` : '<div class="empty" style="padding:24px">No surveys in this job yet. Pick a mode above.</div>'}
+      ${ro ? '' : '<button class="btn block" id="impSurvey" style="margin-top:12px">⬆&nbsp; Import survey from PDF report</button>'}
     </div>
     <div class="pinned"><div class="row2"><button class="btn" id="shareJob">${I.share.replace('<svg', '<svg width="20" height="20"')} SHARE JOB${lockIf()}</button><button class="btn" id="editJob">EDIT JOB</button></div></div></div>`;
   bindCommon(root);
@@ -491,6 +551,7 @@ function menuScreen(job) {
   $$('.modecard').forEach((b) => (b.onclick = () => { if ((b.dataset.mode === 'loop' || b.dataset.mode === 'stake') && !guard(TYPE[b.dataset.mode])) return; b.classList.add('flash'); setTimeout(() => go(b.dataset.mode === 'peg' ? `#/j/${job.id}/peg` : `#/j/${job.id}/new/${b.dataset.mode}`), 120); }));
   $$('.recent button').forEach((b) => (b.onclick = () => go(`#/j/${job.id}/s/${b.dataset.sid}/book`)));
   $('#shareJob').onclick = () => guard('PDF reports & sharing') && go(`#/j/${job.id}/share`);
+  $('#impSurvey') && ($('#impSurvey').onclick = () => importReport(job));
   bindPlanSection(job);
   $('#editJob').onclick = () => (ro ? toast('Archived jobs are read-only') : jobSheet(job));
 }
@@ -667,6 +728,19 @@ function entryScreen(job, s, params) {
   window.onresize = () => rodView && rodView.draw();
   draw();
 }
+// Running three-wire distance totals through the reading being entered (live as you type).
+function liveDistTotals(s, st, ev) {
+  const base = st.editIdx != null ? s.readings.slice(0, st.editIdx) : s.readings;
+  const pend = ev.tw && ev.tw.orderOk && (st.type === 'BS' || st.type === 'FS') ? [{ type: st.type, point: st.point || '?', wires: { t: ev.wires.t.v, m: ev.wires.m.v, b: ev.wires.b.v } }] : [];
+  return { ...C.distTotals({ ...s, readings: [...base, ...pend] }), pending: pend.length > 0 };
+}
+function distTotalsCard(s, t) {
+  const bad = t.used && !t.open && s.imbalanceLimit && Math.abs(t.bal) > s.imbalanceLimit;
+  const cell = (k, v, cls = '') => `<div class="dt ${cls}"><span class="k">${k}</span><span class="v">${v}</span></div>`;
+  const b = (t.bal > 0 ? '+' : t.bal < 0 ? '−' : '±') + Math.abs(t.bal).toFixed(1);
+  return `<div class="dtot${t.used ? '' : ' muted'}" id="distTot" aria-label="Running distance totals"><div class="minilabel">Running dist · ft${t.used ? '' : ' · not used'}${t.open ? ' · setup open' : ''}</div>
+    <div class="dtgrid">${cell('ΣBS', t.cumBS.toFixed(1))}${cell('ΣFS', t.cumFS.toFixed(1))}${cell('BAL', b + (bad ? ' ⚠' : ''), bad ? 'wn' : '')}${cell('TOTAL', t.total.toFixed(1))}</div></div>`;
+}
 function drawEntry(job, s) {
   const st = entry; const ev = entryEval(s, st); const ctx = ev.ctx;
   const setupN = ctx.setups.length + (st.type === 'BS' ? 1 : 0);
@@ -682,7 +756,7 @@ function drawEntry(job, s) {
     <div class="ptrow"><input class="input" id="pt" value="${esc(st.point)}" aria-label="Point name" autocomplete="off" autocapitalize="characters" ${st.type === 'BS' && st.editIdx == null ? 'readonly' : ''}></div>
     ${st.type === 'FS' && st.editIdx == null && closeBM && closeBM.name && s.type !== 'site' && st.point !== closeBM.name ? `<div class="quick"><button id="closeOn">Close on ${esc(closeBM.name)}</button></div>` : ''}
     ${st.three ? `${rbox('t', 'TOP', 'w3')}${rbox('m', 'MID', 'w3')}${rbox('b', 'BOT', 'w3')}
-      <div class="rescard"><div class="result"><span class="lbl">MEAN </span>${ev.tw ? ev.tw.mean.toFixed(3) : '—'}</div><div class="result${C.usesDist(s) ? '' : ' muted'}"><span class="lbl">DIST </span>${ev.distRec != null && !isNaN(ev.distRec) ? ev.distRec.toFixed(1) + ' ft' : '—'}${C.usesDist(s) ? '' : '<span class="lbl"> (not used)</span>'}</div>${resLine}</div>`
+      <div class="rescard"><div class="result"><span class="lbl">MEAN </span>${ev.tw ? ev.tw.mean.toFixed(3) : '—'}</div><div class="result${C.usesDist(s) ? '' : ' muted'}"><span class="lbl">DIST </span>${ev.distRec != null && !isNaN(ev.distRec) ? ev.distRec.toFixed(1) + ' ft' : '—'}${C.usesDist(s) ? '' : '<span class="lbl"> (not used)</span>'}</div>${resLine}</div>${distTotalsCard(s, liveDistTotals(s, st, ev))}`
     : `${rbox('reading', 'READING', '')}${C.usesDist(s) ? rbox('dist', 'DIST ft', 'small') : ''}${resLine}`}
     ${distRow(C.usesDist(s), { compact: true, note: C.usesDist(s) ? '' : st.three ? 'Stadia shown, not used' : 'No DIST · read as is' })}
     ${ev.peg && !ev.impossible ? (ev.peg.noDist ? `<div class="msg pegmsg nd">${C.usesDist(s) ? 'Peg: no distance – reading used as is' : 'Peg off – no distance'}</div>` : `<div class="msg pegmsg">Peg ${sgn(ev.peg.corr)} → ${ev.peg.v.toFixed(3)}</div>`) : ''}
@@ -1542,4 +1616,4 @@ async function boot() {
   }
 }
 boot();
-window.__lb = { db: () => db, C, R, E, FREE_JOB_LIMIT, render: () => render(), openManual: () => openManual() };
+window.__lb = { db: () => db, C, R, E, importReportFile: (jobId, name, bytes) => importReportFile(jobId ? getJob(jobId) : null, name, bytes), FREE_JOB_LIMIT, render: () => render(), openManual: () => openManual() };

@@ -201,6 +201,20 @@ export const standardK = (s) => {
 };
 export const allowable = (k, miles) => round(k * Math.sqrt(Math.max(miles, 0)), 3);
 
+// Running three-wire sight distances: cumulative BS / FS stadia distance, their difference (sight balance)
+// and total, after every BS and FS (IFS side shots are not part of the balance). Uses the recorded stadia
+// distance, so it is shown even with the distance switch OFF (flagged "not used" by callers).
+export function distTotals(s, comp = computeSurvey(s)) {
+  let bs = 0, fs = 0; const rows = [];
+  (s.readings || []).forEach((r, i) => {
+    if (r.type !== 'BS' && r.type !== 'FS') return;
+    const inf = comp.info[i]; const d = inf && inf.dRec != null && !isNaN(inf.dRec) ? inf.dRec : null;
+    if (d != null) { if (r.type === 'BS') bs += d; else fs += d; }
+    rows.push({ idx: i, setup: inf ? inf.setup : null, type: r.type, point: r.point, d: d == null ? null : round(d, 1), cumBS: round(bs, 1), cumFS: round(fs, 1), bal: round(bs - fs, 1), total: round(bs + fs, 1) });
+  });
+  return { rows, cumBS: round(bs, 1), cumFS: round(fs, 1), bal: round(bs - fs, 1), total: round(bs + fs, 1), open: comp.expect === 'FS', used: usesDist(s) };
+}
+
 export function closure(s, comp = computeSurvey(s)) {
   const bm = closingBM(s);
   const closedOn = comp.expect === 'BS' && comp.lastFS && bm && comp.currentPoint.trim().toUpperCase() === String(bm.name).trim().toUpperCase();

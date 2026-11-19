@@ -10,7 +10,7 @@ Offline differential-leveling field book for phones. HTML/CSS/vanilla JS, no bui
 
 ## Docs
 
-- **User manual (PDF, 43 pages; also built into the app under Help & Manual):** https://ddlawler-theonly.github.io/level-book/docs/LevelBook-Manual.pdf
+- **User manual (PDF, 45 pages; also built into the app under Help & Manual):** https://ddlawler-theonly.github.io/level-book/docs/LevelBook-Manual.pdf
 - **Field-trial tester sheet (PDF, 1 page, QR + install + what to try):** https://ddlawler-theonly.github.io/level-book/docs/LevelBook-Tester-Sheet.pdf
 - **Privacy policy:** https://ddlawler-theonly.github.io/level-book/privacy.html
 - **Support:** https://ddlawler-theonly.github.io/level-book/support.html
@@ -36,6 +36,8 @@ Android: open the link in Chrome → menu → **Install app** / Add to Home scre
 - **Stake Out (v1.2.0):** backsight a benchmark for HI, type a design elevation, read the target rod, then shoot the actual rod for CUT / FILL to 0.01 ft
 - **Use distance switch (v1.2.0):** every screen that asks for a sight distance has a switch to use or ignore distances
 - **v1.2.1:** app renamed **BlueWorks Level Book** (home-screen label stays "Level Book"); reports, share titles and feedback subject use the new name. Data is kept.
+- **Report import (preview):** every PDF report carries the full survey data invisibly (XMP metadata). **IMPORT PDF** on the Jobs screen rebuilds the job; **Import survey from PDF report** inside a job adds its surveys. Older PDFs without data get a friendly message. Plan sheet pins are not carried.
+- **Three-wire running distance totals (preview):** live ΣBS / ΣFS stadia distance, balance (ΣBS − ΣFS) and total on the three-wire entry screen; THREE-WIRE DISTANCE TOTALS table in PDF/preview, plus text and CSV.
 - **Field trial (v1.2.0):** TRIAL badge, one-time welcome card, and **Send feedback** (header button or Settings)
 
 ## Stake Out
