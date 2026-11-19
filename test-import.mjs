@@ -2,18 +2,17 @@
 // Run: node --test test-import.mjs   (uses the vendored jsPDF build so it matches the app)
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import * as C from './js/calc.js';
 import * as R from './js/report.js';
 import { seedJobs, seedPegTests, seedStake, surveyDefaults, uid } from './js/seed.js';
 
-const require = createRequire(import.meta.url);
-const jspdf = require('./vendor/jspdf.umd.min.js');
+// vendored jsPDF + AutoTable UMD builds, run as browser globals (no npm dependency; works with "type": "module")
+const vendor = (f) => vm.runInThisContext(readFileSync(new URL('./vendor/' + f, import.meta.url), 'utf8'));
+vendor('jspdf.umd.min.js'); const jspdf = globalThis.jspdf;
 globalThis.window = globalThis.window || {}; window.jspdf = jspdf;
-// vendored AutoTable UMD, run as a browser global (no npm dependency)
-globalThis.jspdf = jspdf; vm.runInThisContext(readFileSync(new URL('./vendor/jspdf.plugin.autotable.min.js', import.meta.url), 'utf8'));
+vendor('jspdf.plugin.autotable.min.js');
 assert.equal(typeof new jspdf.jsPDF().autoTable, 'function', 'AutoTable plugin loaded');
 
 const INC = { table: true, checks: true, adjusted: true, threewire: true, peg: true, notes: true };
