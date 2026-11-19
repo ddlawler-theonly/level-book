@@ -1,6 +1,6 @@
 // Report builders: model -> plain text, CSV, PDF (jsPDF, vendored), HTML preview pages.
 import * as C from './calc.js';
-export const APP_VERSION = '1.3.0';
+export const APP_VERSION = '1.3.1';
 
 const TYPE = { loop: 'Level Loop', run: 'Level Run', site: 'Site Levels', stake: 'Stake Out' };
 export const usDate = (iso) => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${m}/${d}/${y}`; };

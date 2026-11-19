@@ -145,6 +145,6 @@ await page.evaluate(() => document.querySelector('#pipeScroll').scrollTop = docu
 if (which === 'chromium') await shot(SHOTS + '6-pipe-slope-calculator.png'); else await shot(shotOut('pipe-slope'));
 await tap('.pipesec[data-i="2"] .psdel'); ok('remove section: 2 left, totals recalculated', (await page.locator('.pipesec').count()) === 2 && (await text('#psOut')).includes('370.50 ft'));
 // offline: the service worker caches pipe.js
-const cached = await page.evaluate(async () => { try { await navigator.serviceWorker.ready; const keys = await caches.keys(); const c = await caches.open(keys.find((k) => k === 'levelbook-v1.3.0-p2')); return !!(await c.match('./js/pipe.js')); } catch (e) { return 'err ' + e.message; } });
-ok('service worker cache levelbook-v1.3.0-p2 holds js/pipe.js', cached === true, String(cached));
+const cached = await page.evaluate(async () => { try { await navigator.serviceWorker.ready; const keys = await caches.keys(); const c = await caches.open(keys.find((k) => k === 'levelbook-v1.3.1')); return !!(await c.match('./js/pipe.js')); } catch (e) { return 'err ' + e.message; } });
+ok('service worker cache levelbook-v1.3.1 holds js/pipe.js', cached === true, String(cached));
 await browser.close();
